@@ -130,3 +130,6 @@ config.yml
 config.yaml
 .cache/
 build.log
+
+.github/
+.vscode/

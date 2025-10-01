@@ -117,13 +117,16 @@ log_level: "INFO"
 Add to VS Code `settings.json`:
 ```json
 {
-  "github.copilot.advanced": {
-    "mcp.servers": [{
-      "name": "joern-mcp",
-      "command": ["python", "main.py"],
-      "workingDir": "/path/to/joern-mcp"
-    }]
-  }
+	"servers": {
+		"joern-mcp": {
+			"type": "stdio",
+			"command": "python",
+			"args": [
+				"/path/to/joern-mcp/main.py"
+			]
+		}
+	},
+	"inputs": []
 }
 ```
 
