@@ -28,7 +28,7 @@ The Joern MCP Server enables AI coding assistants to perform sophisticated stati
 
 1. **Clone the repository**:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/Lekssays/joern-mcp.git
    cd joern-mcp
    ```
 
