@@ -76,14 +76,46 @@ async def test_basic_functionality():
         else:
             print(f"❌ Query failed: {query_result['error']}")
         
-        # List available queries
-        print("📚 Available pre-built queries...")
-        queries_result = await server.list_queries("security")
-        if queries_result["success"]:
-            security_queries = queries_result["queries"]["security"]
-            print(f"Security queries available: {len(security_queries)}")
-            for name in list(security_queries.keys())[:3]:
-                print(f"  - {name}")
+        # Test all predefined queries
+        print("🧪 Testing all predefined queries...")
+        
+        # Get all categories
+        all_queries_result = await server.list_queries("all")
+        if all_queries_result["success"]:
+            categories = all_queries_result["queries"]
+            test_results = {}
+            
+            for category_name, category_queries in categories.items():
+                print(f"📊 Testing {len(category_queries)} {category_name} queries:")
+                
+                for query_name, query in category_queries.items():
+                    print(f"  🔍 Testing {query_name}...")
+                    try:
+                        result = await server.run_query(project_id, query)
+                        if result["success"]:
+                            result_count = len(result["results"])
+                            test_results[f"{category_name}_{query_name}"] = {
+                                "status": "success",
+                                "result_count": result_count,
+                                "execution_time": result["execution_time"]
+                            }
+                            print(f"    ✅ {query_name}: {result_count} results ({result['execution_time']:.2f}s)")
+                        else:
+                            test_results[f"{category_name}_{query_name}"] = {
+                                "status": "failed",
+                                "error": result["error"]
+                            }
+                            print(f"    ❌ {query_name}: {result['error']}")
+                    except Exception as e:
+                        test_results[f"{category_name}_{query_name}"] = {
+                            "status": "error",
+                            "error": str(e)
+                        }
+                        print(f"    💥 {query_name}: {str(e)}")
+            
+            # Output results in JSON format
+            print("📄 All test results in JSON format:")
+            print(json.dumps(test_results, indent=2))
         
         # Cleanup
         print("🧹 Cleaning up...")

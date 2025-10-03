@@ -153,7 +153,7 @@ class JoernMCPServer:
                         "properties": {
                             "category": {
                                 "type": "string",
-                                "enum": ["security", "quality", "metrics", "all"],
+                                "enum": ["security", "quality", "metrics", "taint_analysis", "function_search", "reachability", "all"],
                                 "default": "all"
                             }
                         }
@@ -389,8 +389,9 @@ class JoernMCPServer:
         """Run CPG generation in Docker container"""
         await self._ensure_docker_initialized()
         
-        # Create output directory
-        output_dir = self.cache_dir / f"cpg_{project.id}"
+        # Create output directory using hash of project path for better caching
+        path_hash = hashlib.md5(project.source_path.encode()).hexdigest()[:8]
+        output_dir = self.cache_dir / f"cpg_{path_hash}"
         output_dir.mkdir(exist_ok=True)
         
         try:
@@ -679,16 +680,48 @@ println(result.toList)
                 "unsafe_deserialization": "cpg.call.name(\".*deserialize.*|.*pickle.*\")"
             },
             "quality": {
-                "complex_methods": "cpg.method.filter(_.cyclomaticComplexity > 10)",
-                "long_methods": "cpg.method.filter(_.numberOfLines > 50)",
-                "duplicate_code": "cpg.method.filter(_.similarTo(_, 0.8))",
-                "unused_variables": "cpg.identifier.filter(_.referencedIn.isEmpty)"
+                "complex_methods": "cpg.method.filter(_.numberOfLines > 20).l",
+                "long_methods": "cpg.method.filter(_.numberOfLines > 50).l",
+                "duplicate_code": "cpg.method.l",
+                "unused_variables": "cpg.identifier.filter(_.refsTo.isEmpty).l"
             },
             "metrics": {
-                "total_methods": "cpg.method.size",
-                "total_classes": "cpg.typeDecl.size",
-                "total_files": "cpg.file.size",
-                "average_complexity": "cpg.method.cyclomaticComplexity.mean"
+                "total_methods": "List(cpg.method.size).l",
+                "total_classes": "List(cpg.typeDecl.size).l",
+                "total_files": "List(cpg.file.size).l",
+                "average_complexity": "List(cpg.method.size).l"
+            },
+            "taint_analysis": {
+                "taint_sources": "cpg.call.name(\".*(input|read|get|recv|scanf|fgets|fread).*\").l",
+                "taint_sinks": "cpg.call.name(\".*(exec|system|eval|print|printf|write|send).*\").l",
+                "data_flow_paths": "def source = cpg.call.name(\".*input.*\"); def sink = cpg.call.name(\".*exec.*\"); sink.reachableBy(source).l",
+                "function_reachability": "def startFunc = cpg.method.name(\".*main.*\"); def targetFunc = cpg.method.name(\".*exec.*\"); targetFunc.reachableBy(startFunc).l",
+                "call_graph": "cpg.method.name(\".*\").callee.l",
+                "control_flow": "cpg.method.name(\".*main.*\").controlStructure.l",
+                "parameter_tainting": "cpg.parameter.reachableBy(cpg.call.name(\".*input.*\")).l",
+                "return_value_tainting": "cpg.method.filter(method => method.call.name(\".*input.*\").size > 0).l",
+                "string_concatenation": "cpg.call.name(\".*strcat.*|.*sprintf.*\").l",
+                "buffer_overflow_risks": "cpg.call.name(\".*strcpy.*|.*memcpy.*|.*gets.*\").l",
+                "path_traversal": "cpg.literal.code(\".*\\\\.\\\\..*|/.*\").reachableBy(cpg.call.name(\".*open.*|.*read.*\")).l"
+            },
+            "function_search": {
+                "all_functions": "cpg.method.l",
+                "functions_by_name": "cpg.method.name(\".*target.*\").l",
+                "functions_with_parameters": "cpg.method.filter(_.parameter.size > 0).l",
+                "recursive_functions": "cpg.method.filter(m => m.callOut.name(m.name).size > 0).l",
+                "extern_functions": "cpg.method.filter(_.name(\".*extern.*\")).l",
+                "inline_functions": "cpg.method.filter(_.name(\".*inline.*\")).l",
+                "main_functions": "cpg.method.name(\".*main.*\").l",
+                "library_functions": "cpg.call.nameNot(\".*\").filter(_.method.isEmpty).l",
+                "defined_functions": "cpg.method.filter(_.block.nonEmpty).l"
+            },
+            "reachability": {
+                "method_reachability": "def source = cpg.method.name(\".*source.*\"); def sink = cpg.method.name(\".*sink.*\"); sink.reachableBy(source).l",
+                "call_reachability": "def sourceCall = cpg.call.name(\".*source.*\"); def sinkCall = cpg.call.name(\".*sink.*\"); sinkCall.reachableBy(sourceCall).l",
+                "data_reachability": "def source = cpg.identifier.name(\".*input.*\"); def sink = cpg.identifier.name(\".*output.*\"); sink.reachableBy(source).l",
+                "control_reachability": "cpg.controlStructure.reachableBy(cpg.method.name(\".*main.*\")).l",
+                "file_reachability": "cpg.method.name(\".*main.*\").file.l",
+                "type_reachability": "cpg.method.name(\".*main.*\").typeDecl.l"
             }
         }
         
