@@ -24,10 +24,8 @@ async def test_basic_functionality():
     server = JoernMCPServer(config)
     
     try:
-        # Initialize Docker
-        print("🐳 Initializing Docker...")
-        await server.initialize_docker()
-        print("✅ Docker initialized")
+        # Docker will be initialized automatically when needed
+        print("🚀 Server ready, Docker will initialize on first use")
         
         # Load sample project
         sample_path = Path(__file__).parent / "examples" / "sample.c"

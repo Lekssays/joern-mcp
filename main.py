@@ -35,7 +35,10 @@ def main():
         print("\nShutting down Joern MCP Server...")
         sys.exit(0)
     except Exception as e:
+        import traceback
         print(f"Error starting server: {e}")
+        print("Full traceback:")
+        traceback.print_exc()
         sys.exit(1)
 
 

@@ -46,6 +46,7 @@ class JoernMCPServer:
         self.cache_dir = Path(self.config.cache.directory)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._setup_handlers()
+        self._docker_initialized = False
         
     def _setup_logging(self) -> logging.Logger:
         """Setup logging configuration"""
@@ -207,12 +208,19 @@ class JoernMCPServer:
                 }
                 return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
 
+    async def _ensure_docker_initialized(self):
+        """Ensure Docker is initialized before operations that need it"""
+        if not self._docker_initialized:
+            await self.initialize_docker()
+            self._docker_initialized = True
+
     async def initialize_docker(self):
         """Initialize Docker client"""
         try:
             self.docker_client = docker.from_env()
-            # Test connection
-            self.docker_client.ping()
+            # Test connection - run in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self.docker_client.ping)
             self.logger.info("Docker client initialized successfully")
             
             # Ensure Joern image is available
@@ -221,9 +229,22 @@ class JoernMCPServer:
         except DockerException as e:
             self.logger.error(f"Failed to initialize Docker client: {e}")
             raise JoernMCPError(f"Docker initialization failed: {e}")
+        except Exception as e:
+            self.logger.error(f"Unexpected error during Docker initialization: {e}")
+            raise JoernMCPError(f"Docker initialization failed: {e}")
     
     async def _ensure_joern_image(self):
         """Ensure Joern Docker image is available"""
+        try:
+            # Run in executor to avoid blocking the async loop
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._check_and_pull_image)
+        except Exception as e:
+            self.logger.error(f"Failed to ensure Joern image: {e}")
+            raise JoernMCPError(f"Docker image preparation failed: {e}")
+    
+    def _check_and_pull_image(self):
+        """Check and pull Joern image (synchronous helper)"""
         try:
             self.docker_client.images.get(self.config.docker.image)
             self.logger.info(f"Joern image {self.config.docker.image} found")
@@ -366,8 +387,7 @@ class JoernMCPServer:
     
     async def _run_cpg_generation(self, project: ProjectInfo, language: str) -> str:
         """Run CPG generation in Docker container"""
-        if not self.docker_client:
-            await self.initialize_docker()
+        await self._ensure_docker_initialized()
         
         # Create output directory
         output_dir = self.cache_dir / f"cpg_{project.id}"
@@ -524,27 +544,30 @@ System.exit(0)
     
     async def _execute_joern_query(self, project: ProjectInfo, query: str, format: str) -> List[Dict[str, Any]]:
         """Execute query in Docker container"""
-        if not self.docker_client:
-            await self.initialize_docker()
+        await self._ensure_docker_initialized()
         
         # Create temporary directory for query execution
         temp_dir = Path(tempfile.mkdtemp(prefix="joern_query_"))
 
         try:
             # Sanitize the incoming query: ensure loadCpg(...) yields a Cpg (not Option[Cpg])
-            sanitized_query = query.replace('loadCpg("/app/cpg/cpg.bin")', 'loadCpg("/app/cpg/cpg.bin").get')
-            sanitized_query = sanitized_query.replace('val cpg = loadCpg("/app/cpg/cpg.bin")', 'val cpg = loadCpg("/app/cpg/cpg.bin").get')
+            cpg_file_path = Path(project.cpg_path)
+            cpg_filename = cpg_file_path.name
+            container_cpg_path = f"/app/cpg/{cpg_filename}"
+            
+            sanitized_query = query.replace('loadCpg("/app/cpg/cpg.bin")', f'loadCpg("{container_cpg_path}").get')
+            sanitized_query = sanitized_query.replace('val cpg = loadCpg("/app/cpg/cpg.bin")', f'val cpg = loadCpg("{container_cpg_path}").get')
             # Normalize accidental double .get from repeated replacements
             sanitized_query = sanitized_query.replace('.get.get', '.get')
 
             # Use Joern's built-in JSON execution directives for proper serialization
             if format == "json":
-                template = r"""
+                template = f"""
 workspace.reset
-val cpg = loadCpg("/app/cpg/cpg.bin").get
-val result = {
+val cpg = loadCpg("{container_cpg_path}").get
+val result = {{
 %QUERY%
-}
+}}
 
 // Use Joern's toJsonPretty directive for proper serialization
 import java.nio.file.Files
@@ -556,12 +579,12 @@ Files.write(Paths.get("/app/output/results.json"), jsonOutput.getBytes("utf-8"))
                 joern_script = template.replace("%QUERY%", sanitized_query)
             else:
                 # For non-json formats, just print the selected output
-                template = r"""
+                template = f"""
 workspace.reset
-val cpg = loadCpg("/app/cpg/cpg.bin").get
-val result = {
+val cpg = loadCpg("{container_cpg_path}").get
+val result = {{
 %QUERY%
-}
+}}
 println(result.toList)
 """
 
@@ -572,12 +595,16 @@ println(result.toList)
                 f.write(joern_script)
 
             # Run query in container
+            cpg_file_path = Path(project.cpg_path)
+            cpg_dir = cpg_file_path.parent
+            cpg_filename = cpg_file_path.name
+            
             container = self.docker_client.containers.run(
                 self.config.docker.image,
                 command="/opt/joern/joern-cli/joern --script /app/output/query.sc",
                 volumes={
                     str(temp_dir): {'bind': '/app/output', 'mode': 'rw'},
-                    str(Path(project.cpg_path).parent): {'bind': '/app/cpg', 'mode': 'ro'}
+                    str(cpg_dir): {'bind': '/app/cpg', 'mode': 'ro'}
                 },
                 working_dir='/app',
                 environment={
@@ -738,24 +765,19 @@ println(result.toList)
     
     async def run(self):
         """Run the MCP server"""
-        await self.initialize_docker()
-        
-        # Import the MCP server runner
-        from mcp.server.stdio import stdio_server
-        
-        async with stdio_server() as (read_stream, write_stream):
-            await self.server.run(
-                read_stream,
-                write_stream,
-                InitializationOptions(
-                    server_name="joern-mcp-server",
-                    server_version="1.0.0",
-                    capabilities={
-                        "tools": {},
-                        "logging": {}
-                    }
+        try:
+            # Import the MCP server runner
+            from mcp.server.stdio import stdio_server
+            
+            async with stdio_server() as (read_stream, write_stream):
+                await self.server.run(
+                    read_stream,
+                    write_stream,
+                    self.server.create_initialization_options()
                 )
-            )
+        except Exception as e:
+            self.logger.error(f"Error running MCP server: {str(e)}", exc_info=True)
+            raise
 
     def _normalize_results(self, raw):
         """Normalize raw JSON results into a list of dictionaries for QueryResult.
