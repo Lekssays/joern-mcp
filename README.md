@@ -339,10 +339,6 @@ python main.py
 6. Push to branch: `git push origin feature-name`
 7. Submit a pull request
 
-## License
-
-MIT License - see LICENSE file for details.
-
 ## Acknowledgments
 
 - [Joern](https://github.com/joernio/joern) - Static analysis platform
