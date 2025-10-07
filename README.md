@@ -1,20 +1,16 @@
 # 🕷️ joern-mcp
 
-A production-ready Model Context Protocol (MCP) server that provides AI assistants with static code analysis capabilities using Joern's Code Property Graph (CPG) technology.
-
-## Overview
-
-The Joern MCP Server enables AI coding assistants to perform sophisticated static code analysis by leveraging Joern's powerful CPG-based analysis in isolated Docker environments. It implements the Model Context Protocol standard, making it compatible with various AI assistants and development environments.
+A Model Context Protocol (MCP) server that provides AI assistants with static code analysis capabilities using [Joern](https://joern.io)'s Code Property Graph (CPG) technology.
 
 ## Features
 
-- **Static Code Analysis**: Deep code analysis using Joern's CPG technology
-- **Multi-Language Support**: C/C++, Java, JavaScript/TypeScript, Python, Go, Kotlin, Scala, C#
-- **Isolated Execution**: All analysis runs in secure Docker containers
-- **Intelligent Caching**: Efficient CPG caching with configurable TTL
-- **GitHub Integration**: Direct analysis of GitHub repositories
-- **Production Ready**: Comprehensive error handling, logging, and monitoring
-- **MCP Compliance**: Full Model Context Protocol implementation
+- **Multi-Language Support**: Java, C/C++, JavaScript, Python, Go, Kotlin, Swift
+- **Docker Isolation**: Each analysis session runs in a secure container
+- **GitHub Integration**: Analyze repositories directly from GitHub URLs
+- **Session-Based**: Persistent CPG sessions with automatic cleanup
+- **Redis-Backed**: Fast caching and session management
+- **Async Queries**: Non-blocking CPG generation and query execution
+- **Built-in Security Queries**: Pre-configured queries for common vulnerabilities
 
 ## Quick Start
 
@@ -22,211 +18,173 @@ The Joern MCP Server enables AI coding assistants to perform sophisticated stati
 
 - Python 3.8+
 - Docker
+- Redis
 - Git
 
 ### Installation
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/Lekssays/joern-mcp.git
-   cd joern-mcp
-   ```
-
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Build Joern Docker image**:
-   ```bash
-   # Option 1: Use the build script (recommended)
-   ./build.sh
-   
-   # Option 2: Build manually
-   docker build -t joern:latest .
-   ```
-
-### Running the Server
-
-**Validate setup first**:
+1. **Clone and install dependencies**:
 ```bash
-python validate.py
+git clone https://github.com/Lekssays/joern-mcp.git
+cd joern-mcp
+pip install -r requirements.txt
 ```
 
-**Basic usage**:
+2. **Setup (builds Joern image and starts Redis)**:
+```bash
+./setup.sh
+```
+
+3. **Configure** (optional):
+```bash
+cp config.example.yaml config.yaml
+# Edit config.yaml as needed
+```
+
+4. **Run the server**:
 ```bash
 python main.py
+# Server will be available at http://localhost:4242
 ```
 
-**With configuration file**:
-```bash
-python main.py config.yml
-```
+## Integration with GitHub Copilot
 
-**Using environment variables**:
-```bash
-export JOERN_DOCKER_IMAGE=joern:latest
-export JOERN_CACHE_DIR=/tmp/joern_cache
-export GITHUB_TOKEN=your_token_here
-python main.py
-```
+The server uses **Streamable HTTP** transport for network accessibility and supports multiple concurrent clients.
 
-> **Note**: The `joern:latest` image is built locally using the included Dockerfile, not pulled from a registry.
+Add to your VS Code `settings.json`:
 
-## Configuration
-
-Create a `config.yml` file for custom configuration:
-
-```yaml
-docker:
-  image: "joern:latest"
-  cpu_limit: "2"
-  memory_limit: "4g"
-  timeout: 300
-  network_mode: "none"
-
-cache:
-  enabled: true
-  max_size_gb: 10
-  ttl_hours: 24
-  directory: "/tmp/joern_cache"
-
-max_concurrent_analyses: 3
-github_token: "your_github_token"  # Optional, for private repos
-log_level: "INFO"
-```
-
-### Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `JOERN_DOCKER_IMAGE` | Joern Docker image | `joern:latest` |
-| `JOERN_CPU_LIMIT` | CPU limit for containers | `2` |
-| `JOERN_MEMORY_LIMIT` | Memory limit for containers | `4g` |
-| `JOERN_TIMEOUT` | Container timeout (seconds) | `300` |
-| `JOERN_CACHE_ENABLED` | Enable CPG caching | `true` |
-| `JOERN_CACHE_SIZE_GB` | Cache size limit (GB) | `10` |
-| `JOERN_CACHE_DIR` | Cache directory | `/tmp/joern_cache` |
-| `GITHUB_TOKEN` | GitHub access token | - |
-| `JOERN_LOG_LEVEL` | Logging level | `INFO` |
-
-## Usage with AI Assistants
-
-### VS Code with GitHub Copilot
-
-Add to VS Code `settings.json`:
 ```json
 {
-	"servers": {
-		"joern-mcp": {
-			"type": "stdio",
-			"command": "python",
-			"args": [
-				"/path/to/joern-mcp/main.py"
-			]
-		}
-	},
-	"inputs": []
-}
-```
-
-### Claude Desktop
-
-Configure in Claude Desktop settings:
-```json
-{
-  "mcp": {
-    "servers": [{
-      "name": "joern-mcp",
-      "command": ["python", "main.py"],
-      "workingDirectory": "/path/to/joern-mcp"
-    }]
+  "github.copilot.advanced": {
+    "mcp": {
+      "servers": {
+        "joern-mcp": {
+          "url": "http://localhost:4242/mcp",
+        }
+      }
+    }
   }
 }
+```
+
+Make sure the server is running before using it with Copilot:
+```bash
+python main.py
 ```
 
 ## Available Tools
 
 ### Core Tools
 
-- **`load_project`**: Load code from GitHub URL or local path
-- **`generate_cpg`**: Generate Code Property Graph for analysis
-- **`run_query`**: Execute Joern queries against the CPG
-- **`list_projects`**: List all loaded projects
-- **`project_info`**: Get detailed project information
-- **`cleanup_project`**: Clean up project resources
+- **`create_cpg_session`**: Initialize analysis session from local path or GitHub URL
+- **`run_cpgql_query`**: Execute synchronous CPGQL queries with JSON output
+- **`run_cpgql_query_async`**: Execute asynchronous queries with status tracking
+- **`get_session_status`**: Check session state and metadata
+- **`list_sessions`**: View active sessions with filtering
+- **`close_session`**: Clean up session resources
+- **`list_queries`**: Get pre-built security and quality queries
 
-### Pre-built Queries
-
-- **`list_queries`**: Access security, quality, and metrics queries
-
-#### Security Queries
-- SQL injection detection
-- XSS sink identification
-- Hardcoded secrets discovery
-- Unsafe deserialization patterns
-
-#### Quality Queries
-- Complex methods detection
-- Long methods identification
-- Duplicate code analysis
-- Unused variables discovery
-
-#### Metrics Queries
-- Total methods/classes/files count
-- Average cyclomatic complexity
-
-## Example Usage
-
-### Load and Analyze a Project
+### Example Usage
 
 ```python
-# Example MCP client interaction
+# Create session from GitHub
 {
-  "tool": "load_project",
+  "tool": "create_cpg_session",
   "arguments": {
-    "source": "https://github.com/user/repo",
-    "branch": "main"
+    "source_type": "github",
+    "source_path": "https://github.com/user/repo",
+    "language": "java"
   }
 }
 
+# Run query
 {
-  "tool": "generate_cpg",
+  "tool": "run_cpgql_query",
   "arguments": {
-    "project_id": "abc12345"
-  }
-}
-
-{
-  "tool": "run_query",
-  "arguments": {
-    "project_id": "abc12345",
-    "query": "cpg.method.filter(_.cyclomaticComplexity > 10)"
+    "session_id": "abc-123-def",
+    "query": "cpg.method.name.l"
   }
 }
 ```
 
-### Common Queries
+### Pre-Built Queries
 
-**Find all functions**:
-```scala
-cpg.method.l
+The `list_queries` tool provides 20+ pre-configured queries including:
+
+**Security:**
+- SQL injection detection
+- XSS vulnerabilities
+- Hardcoded secrets
+- Command injection
+- Path traversal
+
+**Memory Safety:**
+- Buffer overflow risks
+- Memory leaks
+- Null pointer dereferences
+- Uninitialized variables
+
+**Code Quality:**
+- All methods/functions
+- Control structures
+- Function calls
+- String literals
+
+## Configuration
+
+Key settings in `config.yaml`:
+
+```yaml
+server:
+  host: 0.0.0.0
+  port: 4242
+  log_level: INFO
+
+redis:
+  host: localhost
+  port: 6379
+
+sessions:
+  ttl: 3600                # Session timeout (seconds)
+  max_concurrent: 50       # Max concurrent sessions
+
+cpg:
+  generation_timeout: 600  # CPG generation timeout (seconds)
+  supported_languages: [java, c, cpp, javascript, python, go, kotlin, swift]
 ```
 
-**Find function calls**:
+Environment variables override config file settings (e.g., `MCP_HOST`, `REDIS_HOST`, `SESSION_TTL`).
+
+## Example CPGQL Queries
+
+**Find all methods:**
 ```scala
-cpg.call.l
+cpg.method.name.l
 ```
 
-**Security analysis**:
+**Find hardcoded secrets:**
 ```scala
-cpg.call.name(".*exec.*").code
+cpg.literal.code("(?i).*(password|secret|api_key).*").l
 ```
 
-**Complex methods**:
+**Find SQL injection risks:**
 ```scala
-cpg.method.filter(_.cyclomaticComplexity > 10)
+cpg.call.name(".*execute.*").where(_.argument.isLiteral.code(".*SELECT.*")).l
 ```
+
+**Find complex methods:**
+```scala
+cpg.method.filter(_.cyclomaticComplexity > 10).l
+```
+
+## Architecture
+
+- **FastMCP Server**: Built on FastMCP 2.12.4 framework with **Streamable HTTP** transport
+- **HTTP Transport**: Network-accessible API supporting multiple concurrent clients
+- **Docker Containers**: One isolated Joern container per session
+- **Redis**: Session state and query result caching
+- **Async Processing**: Non-blocking CPG generation
+- **CPG Caching**: Reuse CPGs for identical source/language combinations
 
 ## Development
 
@@ -235,97 +193,85 @@ cpg.method.filter(_.cyclomaticComplexity > 10)
 ```
 joern-mcp/
 ├── src/
-│   ├── __init__.py
-│   ├── server.py          # Main server implementation
-│   ├── models.py          # Data models and exceptions
-│   ├── utils.py           # Utility functions
-│   └── config.py          # Configuration management
-├── tests/
-│   ├── conftest.py        # Test configuration
-│   ├── test_server.py     # Server integration tests
-│   ├── test_models.py     # Model unit tests
-│   └── test_utils.py      # Utility function tests
-├── examples/
-│   └── sample.c           # Sample code for testing
-├── main.py                # Entry point
-├── test_client.py         # Simple test client
-├── validate.py            # Setup validation script
-├── requirements.txt       # Dependencies
-├── Dockerfile             # Joern Docker image
-├── build.sh              # Docker build script
-└── README.md
+│   ├── services/       # Session, Docker, Git, CPG, Query services
+│   ├── tools/          # MCP tool definitions
+│   ├── utils/          # Redis, logging, validators
+│   └── models.py       # Data models
+├── playground/         # Test codebases and CPGs
+├── main.py            # Server entry point
+├── config.yaml        # Configuration
+└── requirements.txt   # Dependencies
 ```
 
 ### Running Tests
 
-**Run all tests**:
 ```bash
+# Install dev dependencies
+pip install -r requirements.txt
+
+# Run tests
 pytest
-```
 
-**Run with coverage**:
-```bash
+# Run with coverage
 pytest --cov=src --cov-report=html
-```
-
-**Run integration tests** (requires Docker):
-```bash
-pytest -m integration
-```
-
-**Run specific test file**:
-```bash
-pytest tests/test_server.py
 ```
 
 ### Code Quality
 
-**Format code**:
 ```bash
+# Format
 black src/ tests/
 isort src/ tests/
-```
 
-**Lint code**:
-```bash
+# Lint
 flake8 src/ tests/
 mypy src/
 ```
 
 ## Troubleshooting
 
-### Common Issues
-
-**Docker connection error**:
-- Ensure Docker is running
-- Check Docker daemon accessibility
-- Verify user permissions for Docker socket
-
-**Image not found**:
-- Build the Joern image: `docker build -t joern:latest .`
-- Check image name in configuration
-- Verify the build completed successfully: `docker images | grep joern`
-
-**Docker build issues**:
-- Ensure Docker has sufficient disk space
-- Check internet connectivity for downloading Joern
-- Try building with more verbose output: `docker build -t joern:latest . --progress=plain`
-
-**Memory issues**:
-- Increase Docker memory limit in config
-- Reduce concurrent analysis limit
-- Clear cache directory
-
-**Permission errors**:
-- Check file/directory permissions
-- Ensure cache directory is writable
-- Verify Docker socket permissions
-
-### Logging
-
-Enable debug logging for troubleshooting:
+**Setup issues:**
 ```bash
-export JOERN_LOG_LEVEL=DEBUG
+# Re-run setup to rebuild and restart services
+./setup.sh
+```
+
+**Docker issues:**
+```bash
+# Verify Docker is running
+docker ps
+
+# Check Joern image
+docker images | grep joern
+
+# Check Redis container
+docker ps | grep joern-redis
+```
+
+**Redis connection issues:**
+```bash
+# Test Redis connection
+docker exec joern-redis redis-cli ping
+
+# Check Redis logs
+docker logs joern-redis
+
+# Restart Redis
+docker restart joern-redis
+```
+
+**Server connectivity:**
+```bash
+# Test server is running
+curl http://localhost:4242/health
+
+# Check server logs for errors
+python main.py
+```
+
+**Debug logging:**
+```bash
+export MCP_LOG_LEVEL=DEBUG
 python main.py
 ```
 
@@ -334,12 +280,11 @@ python main.py
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature-name`
 3. Make changes and add tests
-4. Run tests and linting: `pytest && black . && flake8`
-5. Commit changes: `git commit -am 'Add feature'`
-6. Push to branch: `git push origin feature-name`
-7. Submit a pull request
+4. Run tests: `pytest && black . && flake8`
+5. Submit a pull request
 
 ## Acknowledgments
 
 - [Joern](https://github.com/joernio/joern) - Static analysis platform
-- [Model Context Protocol](https://modelcontextprotocol.io/) - AI assistant integration standard
+- [FastMCP](https://github.com/jlowin/fastmcp) - MCP framework
+- [Model Context Protocol](https://modelcontextprotocol.io/) - MCP specification
