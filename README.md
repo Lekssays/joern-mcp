@@ -283,10 +283,6 @@ python main.py
 4. Run tests: `pytest && black . && flake8`
 5. Submit a pull request
 
-## License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
 ## Acknowledgments
 
 - [Joern](https://github.com/joernio/joern) - Static analysis platform
