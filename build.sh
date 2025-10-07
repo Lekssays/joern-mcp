@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build script for Joern MCP Server
+# Build script for Joern Docker image
 
 set -e
 
@@ -13,7 +13,7 @@ fi
 
 # Build the image
 echo "📦 Building joern:latest image..."
-docker build -t joern:latest . --progress=plain
+docker build -f Dockerfile.joern -t joern:latest . --progress=plain
 
 # Verify the image was built
 if docker images | grep -q "joern.*latest"; then
