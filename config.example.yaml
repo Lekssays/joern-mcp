@@ -1,0 +1,41 @@
+server:
+  host: ${MCP_HOST:0.0.0.0}
+  port: ${MCP_PORT:4242}
+  log_level: ${MCP_LOG_LEVEL:INFO}
+
+redis:
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:6379}
+  password: ${REDIS_PASSWORD:}
+  db: ${REDIS_DB:0}
+
+joern:
+  binary_path: ${JOERN_BINARY_PATH:joern}
+  memory_limit: ${JOERN_MEMORY_LIMIT:4g}
+
+sessions:
+  ttl: ${SESSION_TTL:3600}
+  idle_timeout: ${SESSION_IDLE_TIMEOUT:1800}
+  max_concurrent: ${MAX_CONCURRENT_SESSIONS:50}
+
+cpg:
+  generation_timeout: ${CPG_GENERATION_TIMEOUT:600}
+  max_repo_size_mb: ${MAX_REPO_SIZE_MB:500}
+  supported_languages:
+    - java
+    - c
+    - cpp
+    - javascript
+    - python
+    - go
+    - kotlin
+    - swift
+
+query:
+  timeout: ${QUERY_TIMEOUT:30}
+  cache_enabled: ${QUERY_CACHE_ENABLED:true}
+  cache_ttl: ${QUERY_CACHE_TTL:300}
+
+storage:
+  workspace_root: ${WORKSPACE_ROOT:/tmp/joern-mcp}
+  cleanup_on_shutdown: ${CLEANUP_ON_SHUTDOWN:true}

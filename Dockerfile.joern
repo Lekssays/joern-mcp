@@ -1,0 +1,41 @@
+# Dockerfile for Joern - Code Property Graph Analysis Tool
+# This builds a local Joern image with all necessary tools for C/C++ analysis
+
+FROM eclipse-temurin:21-jdk-jammy
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    wget \
+    unzip \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Joern version
+ENV JOERN_VERSION=4.0.429
+ENV JOERN_HOME=/opt/joern
+
+# Download and install Joern from joernio/joern GitHub releases
+RUN mkdir -p ${JOERN_HOME} && \
+    cd /tmp && \
+    wget -q https://github.com/joernio/joern/releases/download/v${JOERN_VERSION}/joern-install.sh && \
+    chmod +x joern-install.sh && \
+    sed -i 's/sudo //g' joern-install.sh && \
+    ./joern-install.sh && \
+    rm -rf joern-install.sh
+
+# Add Joern CLI tools to PATH
+ENV PATH="${JOERN_HOME}/joern-cli:${JOERN_HOME}/joern-cli/bin:${PATH}"
+
+# Create workspace directory
+RUN mkdir -p /workspace /playground
+
+# Set working directory
+WORKDIR /workspace
+
+# Verify installation - check both joern and c2cpg
+RUN joern --help && /opt/joern/joern-cli/c2cpg --help
+
+# Default command - keep container running for interactive use
+CMD ["tail", "-f", "/dev/null"]
