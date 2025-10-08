@@ -133,3 +133,4 @@ build.log
 
 .github/
 .vscode/
+playground/codebases/*

@@ -117,7 +117,7 @@ class TestCPGGenerator:
                 language="java"
             )
 
-            assert result == "/playground/cpgs/session-123.cpg"
+            assert result == "/workspace/cpg.bin"
             mock_session_manager.update_status.assert_any_call("session-123", SessionStatus.GENERATING.value)
             mock_session_manager.update_session.assert_called_once()
 
@@ -145,7 +145,7 @@ class TestCPGGenerator:
                 language="python"
             )
 
-            assert result == "/playground/cpgs/session-456.cpg"
+            assert result == "/workspace/cpg.bin"
 
     @pytest.mark.asyncio
     async def test_generate_cpg_timeout(self, cpg_generator, mock_session_manager):

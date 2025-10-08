@@ -34,8 +34,8 @@ RUN mkdir -p /workspace /playground
 # Set working directory
 WORKDIR /workspace
 
-# Verify installation - check both joern and c2cpg
-RUN joern --help && /opt/joern/joern-cli/c2cpg --help
+# Verify installation - check joern
+RUN joern --help
 
 # Default command - keep container running for interactive use
 CMD ["tail", "-f", "/dev/null"]

@@ -39,6 +39,7 @@ class TestSessionManager:
     async def test_create_session_success(self, session_manager, mock_redis_client):
         """Test successful session creation"""
         mock_redis_client.list_sessions = AsyncMock(return_value=[])
+        mock_redis_client.get_session = AsyncMock(return_value=None)  # Mock to return None for new session
         mock_redis_client.save_session = AsyncMock()
 
         session = await session_manager.create_session(
@@ -57,6 +58,7 @@ class TestSessionManager:
 
         # Verify Redis calls
         mock_redis_client.list_sessions.assert_called_once()
+        mock_redis_client.get_session.assert_called_once()  # Should check if session exists
         mock_redis_client.save_session.assert_called_once()
 
     @pytest.mark.asyncio

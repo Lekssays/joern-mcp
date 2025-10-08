@@ -172,25 +172,53 @@ async def explore_codebase_workflow(client, session_id):
     else:
         logger.error(f"  ❌ Failed: {callgraph_dict.get('error')}")
     
-    # Step 7: Find hardcoded strings
-    logger.info("\n🔍 Step 7: Finding hardcoded string literals...")
-    literals_result = await client.call_tool("find_literals", {
+    # Step 8: Check method reachability
+    logger.info("\n� Step 8: Checking method reachability...")
+    reachability_result = await client.call_tool("check_method_reachability", {
         "session_id": session_id,
-        "pattern": ".*",
-        "limit": 10
+        "source_method": "main",
+        "target_method": ".*"
     })
-    literals_dict = extract_tool_result(literals_result)
+    reachability_dict = extract_tool_result(reachability_result)
     
-    if literals_dict.get("success"):
-        literals = literals_dict.get("literals", [])
-        logger.info(f"  ✅ Found {len(literals)} literals:")
-        for lit in literals[:8]:
-            value = lit['value'][:50] if len(lit['value']) > 50 else lit['value']
-            logger.info(f"     - {value} (type: {lit['type']}) at {lit['filename']}:{lit['lineNumber']}")
-        if len(literals) > 8:
-            logger.info(f"     ... and {len(literals) - 8} more")
+    if reachability_dict.get("success"):
+        reachable = reachability_dict.get("reachable", False)
+        source = reachability_dict.get("source_method", "")
+        target = reachability_dict.get("target_method", "")
+        message = reachability_dict.get("message", "")
+        logger.info(f"  ✅ Reachability check: {message}")
     else:
-        logger.error(f"  ❌ Failed: {literals_dict.get('error')}")
+        logger.error(f"  ❌ Failed: {reachability_dict.get('error')}")
+    
+    # Additional reachability checks for common patterns
+    logger.info("\n🔗 Step 9: Checking reachability for common method pairs...")
+    common_checks = [
+        ("main", ".*init.*"),
+        ("main", ".*cleanup.*"),
+        ("main", ".*process.*"),
+        ("main", ".*error.*")
+    ]
+    
+    for source_pattern, target_pattern in common_checks:
+        try:
+            reach_result = await client.call_tool("check_method_reachability", {
+                "session_id": session_id,
+                "source_method": source_pattern,
+                "target_method": target_pattern
+            })
+            reach_dict = extract_tool_result(reach_result)
+            
+            if reach_dict.get("success"):
+                reachable = reach_dict.get("reachable", False)
+                if reachable:
+                    logger.info(f"  ✅ {source_pattern} can reach {target_pattern}")
+                else:
+                    logger.info(f"  ℹ️  {source_pattern} cannot reach {target_pattern}")
+            else:
+                logger.debug(f"  Failed check: {source_pattern} -> {target_pattern}")
+        except Exception as e:
+            logger.debug(f"  Error checking {source_pattern} -> {target_pattern}: {e}")
+            continue
 
 
 async def security_review_workflow(client, session_id):
@@ -298,23 +326,44 @@ async def code_review_workflow(client, session_id):
     else:
         logger.error(f"  ❌ Failed: {find_main_dict.get('error')}")
     
-    # 2. List function calls to understand control flow
-    logger.info("\n📞 Step 2: Listing function calls...")
-    list_calls_result = await client.call_tool("list_calls", {
-        "session_id": session_id,
-        "limit": 15
-    })
-    list_calls_dict = extract_tool_result(list_calls_result)
+    # 3. Check reachability between entry points and key functions
+    logger.info("\n🔗 Step 3: Checking reachability between entry points and key functions...")
     
-    if list_calls_dict.get("success"):
-        calls = list_calls_dict.get("calls", [])
-        logger.info(f"  ✅ Found {len(calls)} function calls:")
-        for c in calls[:10]:
-            logger.info(f"     - {c['caller']} calls {c['callee']}")
-        if len(calls) > 10:
-            logger.info(f"     ... and {len(calls) - 10} more")
-    else:
-        logger.error(f"  ❌ Failed: {list_calls_dict.get('error')}")
+    # Get entry points again for reachability checks
+    if find_main_dict.get("success"):
+        entry_methods = find_main_dict.get("methods", [])
+        
+        # Check if entry points can reach common function types
+        key_function_patterns = [
+            ".*alloc.*", ".*free.*", ".*init.*", ".*cleanup.*", 
+            ".*process.*", ".*handle.*", ".*parse.*", ".*validate.*"
+        ]
+        
+        for entry in entry_methods[:3]:  # Check first 3 entry points
+            entry_name = entry['name']
+            logger.info(f"  Checking reachability from '{entry_name}':")
+            
+            reachable_count = 0
+            for pattern in key_function_patterns:
+                try:
+                    reach_result = await client.call_tool("check_method_reachability", {
+                        "session_id": session_id,
+                        "source_method": entry_name,
+                        "target_method": pattern
+                    })
+                    reach_dict = extract_tool_result(reach_result)
+                    
+                    if reach_dict.get("success") and reach_dict.get("reachable"):
+                        reachable_count += 1
+                        logger.info(f"     ✅ Can reach: {pattern}")
+                    
+                except Exception as e:
+                    continue
+            
+            if reachable_count == 0:
+                logger.info(f"     ℹ️  No key functions reachable from {entry_name}")
+            else:
+                logger.info(f"     📊 {reachable_count}/{len(key_function_patterns)} key function types reachable")
 
 
 async def demonstrate_browsing_tools():

@@ -29,17 +29,43 @@ from ..utils.validators import (
 logger = logging.getLogger(__name__)
 
 
-def get_cpg_cache_path(source_path: str, language: str, playground_path: str) -> str:
+def get_cpg_cache_key(source_type: str, source_path: str, language: str) -> str:
     """
-    Generate a deterministic CPG cache path based on source path and language.
-    Uses SHA256 hash of the source path to create unique but reproducible filename.
+    Generate a deterministic CPG cache key based on source type, path, and language.
+    This is separate from session IDs - used only for CPG caching.
     """
-    # Create a unique identifier from source path and language
-    identifier = f"{source_path}:{language}"
+    import hashlib
+    
+    if source_type == "github":
+        # Extract owner/repo from GitHub URL
+        # Handle URLs like: https://github.com/owner/repo or https://github.com/owner/repo.git
+        if "github.com/" in source_path:
+            parts = source_path.split("github.com/")[-1].split("/")
+            if len(parts) >= 2:
+                owner = parts[0]
+                repo = parts[1].replace(".git", "")  # Remove .git suffix if present
+                identifier = f"github:{owner}/{repo}"
+            else:
+                # Fallback to full path if parsing fails
+                identifier = f"github:{source_path}"
+        else:
+            identifier = f"github:{source_path}"
+    else:
+        # For local paths, convert to absolute path for consistency
+        source_path = os.path.abspath(source_path)
+        identifier = f"local:{source_path}"
+    
     hash_digest = hashlib.sha256(identifier.encode()).hexdigest()[:16]
     
-    # Create CPG filename
-    cpg_filename = f"cpg_{hash_digest}_{language}.bin"
+    return hash_digest
+
+
+def get_cpg_cache_path(cache_key: str, playground_path: str) -> str:
+    """
+    Generate a deterministic CPG cache path based on cache key.
+    """
+    # Create CPG filename using cache key only (no language)
+    cpg_filename = f"cpg_{cache_key}.bin"
     cpg_cache_path = os.path.join(playground_path, "cpgs", cpg_filename)
     
     return cpg_cache_path
@@ -105,61 +131,58 @@ def register_tools(mcp, services: dict):
             cpg_generator = services['cpg_generator']
             storage_config = services['config'].storage
             
-            # Create session
-            session = await session_manager.create_session(
-                source_type=source_type,
-                source_path=source_path,
-                language=language,
-                options={
-                    'github_token': github_token,
-                    'branch': branch
-                }
-            )
-            
-            # Handle source preparation
-            workspace_path = os.path.join(storage_config.workspace_root, "repos", session.id)
+            # Generate CPG cache key for checking existing CPGs
+            cpg_cache_key = get_cpg_cache_key(source_type, source_path, language)
             
             # Get playground path (absolute)
             playground_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'playground'))
             
-            if source_type == "github":
-                validate_github_url(source_path)
-                # Clone to playground/codebases instead
-                target_path = os.path.join(playground_path, "codebases", session.id)
-                os.makedirs(target_path, exist_ok=True)
+            # Check if CPG already exists in cache BEFORE creating session
+            cpg_cache_path = get_cpg_cache_path(cpg_cache_key, playground_path)
+            cpg_exists = os.path.exists(cpg_cache_path)
+            
+            if cpg_exists:
+                logger.info(f"Found existing CPG in cache: {cpg_cache_path}")
                 
-                await git_manager.clone_repository(
-                    repo_url=source_path,
-                    target_path=target_path,
-                    branch=branch,
-                    token=github_token
+                # Create session with random UUID (not deterministic)
+                session = await session_manager.create_session(
+                    source_type=source_type,
+                    source_path=source_path,
+                    language=language,
+                    options={
+                        'github_token': github_token,
+                        'branch': branch
+                    }
                 )
-                # Path inside container
-                container_source_path = f"/playground/codebases/{session.id}"
-            else:
-                # For local paths, check if it's relative to playground/codebases
-                if source_path.startswith("playground/codebases/") or "/playground/codebases/" in source_path:
-                    # Already in playground, use directly
-                    if not os.path.isabs(source_path):
-                        source_path = os.path.abspath(source_path)
-                    
-                    if not os.path.exists(source_path):
-                        raise ValidationError(f"Path does not exist: {source_path}")
-                    if not os.path.isdir(source_path):
-                        raise ValidationError(f"Path is not a directory: {source_path}")
-                    
-                    # Get relative path from playground root
-                    rel_path = os.path.relpath(source_path, playground_path)
-                    container_source_path = f"/playground/{rel_path}"
-                    
-                    logger.info(f"Using local source from playground: {source_path} -> {container_source_path}")
+                
+                # Handle source preparation (still need to copy/clone for the session)
+                workspace_path = os.path.join(storage_config.workspace_root, "repos", session.id)
+                
+                # Use cache key for codebase directory
+                target_path = os.path.join(playground_path, "codebases", cpg_cache_key)
+                
+                if source_type == "github":
+                    validate_github_url(source_path)
+                    # Clone to playground/codebases with cache key
+                    if not os.path.exists(target_path):
+                        os.makedirs(target_path, exist_ok=True)
+                        
+                        await git_manager.clone_repository(
+                            repo_url=source_path,
+                            target_path=target_path,
+                            branch=branch,
+                            token=github_token
+                        )
+                    # Path inside container
+                    container_source_path = f"/playground/codebases/{cpg_cache_key}"
                 else:
-                    # Copy to playground/codebases
+                    # Copy to playground/codebases with cache key if not exists
+                    validate_local_path(source_path)
                     import shutil
                     
                     # Validate the path exists on the host system
                     if not os.path.isabs(source_path):
-                        raise ValidationError("Local path must be absolute or relative to playground/codebases")
+                        raise ValidationError("Local path must be absolute")
                     
                     # Detect if we're running in a container
                     in_container = (
@@ -178,38 +201,27 @@ def register_tools(mcp, services: dict):
                     if not os.path.isdir(container_check_path):
                         raise ValidationError(f"Path is not a directory: {source_path}")
                     
-                    # Copy to playground/codebases
-                    target_path = os.path.join(playground_path, "codebases", session.id)
-                    os.makedirs(target_path, exist_ok=True)
-                    
-                    logger.info(f"Copying local source from {container_check_path} to {target_path}")
-                    
-                    for item in os.listdir(container_check_path):
-                        src_item = os.path.join(container_check_path, item)
-                        dst_item = os.path.join(target_path, item)
+                    # Copy to playground/codebases with cache key if not exists
+                    if not os.path.exists(target_path):
+                        os.makedirs(target_path, exist_ok=True)
                         
-                        if os.path.isdir(src_item):
-                            shutil.copytree(src_item, dst_item, dirs_exist_ok=True)
-                        else:
-                            shutil.copy2(src_item, dst_item)
+                        logger.info(f"Copying local source from {container_check_path} to {target_path}")
+                        
+                        for item in os.listdir(container_check_path):
+                            src_item = os.path.join(container_check_path, item)
+                            dst_item = os.path.join(target_path, item)
+                            
+                            if os.path.isdir(src_item):
+                                shutil.copytree(src_item, dst_item, dirs_exist_ok=True)
+                            else:
+                                shutil.copy2(src_item, dst_item)
                     
-                    container_source_path = f"/playground/codebases/{session.id}"
-            
-            # Create workspace directory for CPG storage
-            os.makedirs(workspace_path, exist_ok=True)
-            
-            # Ensure playground/cpgs directory exists
-            cpgs_dir = os.path.join(playground_path, "cpgs")
-            os.makedirs(cpgs_dir, exist_ok=True)
-            
-            # Check if CPG already exists in cache
-            cpg_cache_path = get_cpg_cache_path(source_path, language, playground_path)
-            cpg_exists = os.path.exists(cpg_cache_path)
-            
-            if cpg_exists:
-                logger.info(f"Found existing CPG in cache: {cpg_cache_path}")
+                    container_source_path = f"/playground/codebases/{cpg_cache_key}"
+                
+                # Create workspace directory for CPG storage
+                os.makedirs(workspace_path, exist_ok=True)
+                
                 # Copy cached CPG to workspace
-                import shutil
                 cpg_path = os.path.join(workspace_path, "cpg.bin")
                 shutil.copy2(cpg_cache_path, cpg_path)
                 
@@ -247,6 +259,102 @@ def register_tools(mcp, services: dict):
                 }
             else:
                 logger.info(f"No cached CPG found, will generate new one")
+                
+                # Create session with random UUID
+                session = await session_manager.create_session(
+                    source_type=source_type,
+                    source_path=source_path,
+                    language=language,
+                    options={
+                        'github_token': github_token,
+                        'branch': branch
+                    }
+                )
+                
+                # Handle source preparation
+                workspace_path = os.path.join(storage_config.workspace_root, "repos", session.id)
+                
+                if source_type == "github":
+                    validate_github_url(source_path)
+                    # Clone to playground/codebases with cache key
+                    target_path = os.path.join(playground_path, "codebases", cpg_cache_key)
+                    if not os.path.exists(target_path):
+                        os.makedirs(target_path, exist_ok=True)
+                        
+                        await git_manager.clone_repository(
+                            repo_url=source_path,
+                            target_path=target_path,
+                            branch=branch,
+                            token=github_token
+                        )
+                    # Path inside container
+                    container_source_path = f"/playground/codebases/{cpg_cache_key}"
+                else:
+                    # For local paths, check if it's relative to playground/codebases
+                    if source_path.startswith("playground/codebases/") or "/playground/codebases/" in source_path:
+                        # Already in playground, use directly
+                        if not os.path.isabs(source_path):
+                            source_path = os.path.abspath(source_path)
+                        
+                        if not os.path.exists(source_path):
+                            raise ValidationError(f"Path does not exist: {source_path}")
+                        if not os.path.isdir(source_path):
+                            raise ValidationError(f"Path is not a directory: {source_path}")
+                        
+                        # Get relative path from playground root
+                        rel_path = os.path.relpath(source_path, playground_path)
+                        container_source_path = f"/playground/{rel_path}"
+                        
+                        logger.info(f"Using local source from playground: {source_path} -> {container_source_path}")
+                    else:
+                        # Copy to playground/codebases with cache key if not exists
+                        import shutil
+                        
+                        # Validate the path exists on the host system
+                        if not os.path.isabs(source_path):
+                            raise ValidationError("Local path must be absolute or relative to playground/codebases")
+                        
+                        # Detect if we're running in a container
+                        in_container = (
+                            os.path.exists("/.dockerenv") or
+                            os.path.exists("/run/.containerenv") or
+                            os.path.exists("/host/home/")
+                        )
+                        
+                        container_check_path = source_path
+                        if in_container and source_path.startswith("/home/"):
+                            container_check_path = source_path.replace("/home/", "/host/home/", 1)
+                            logger.info(f"Running in container, translated path: {source_path} -> {container_check_path}")
+                        
+                        if not os.path.exists(container_check_path):
+                            raise ValidationError(f"Path does not exist: {source_path}")
+                        if not os.path.isdir(container_check_path):
+                            raise ValidationError(f"Path is not a directory: {source_path}")
+                        
+                        # Copy to playground/codebases with cache key if not exists
+                        target_path = os.path.join(playground_path, "codebases", cpg_cache_key)
+                        if not os.path.exists(target_path):
+                            os.makedirs(target_path, exist_ok=True)
+                            
+                            logger.info(f"Copying local source from {container_check_path} to {target_path}")
+                            
+                            for item in os.listdir(container_check_path):
+                                src_item = os.path.join(container_check_path, item)
+                                dst_item = os.path.join(target_path, item)
+                                
+                                if os.path.isdir(src_item):
+                                    shutil.copytree(src_item, dst_item, dirs_exist_ok=True)
+                                else:
+                                    shutil.copy2(src_item, dst_item)
+                        
+                        container_source_path = f"/playground/codebases/{cpg_cache_key}"
+                
+                # Create workspace directory for CPG storage
+                os.makedirs(workspace_path, exist_ok=True)
+                
+                # Ensure playground/cpgs directory exists
+                cpgs_dir = os.path.join(playground_path, "cpgs")
+                os.makedirs(cpgs_dir, exist_ok=True)
                 
                 # Start Docker container with playground mount
                 container_id = await docker_orch.start_container(
@@ -1764,6 +1872,102 @@ def register_tools(mcp, services: dict):
             
         except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
             logger.error(f"Error finding literals: {e}")
+            return {
+                "success": False,
+                "error": {
+                    "code": type(e).__name__.upper(),
+                    "message": str(e)
+                }
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": str(e)
+                }
+            }
+
+    @mcp.tool()
+    async def check_method_reachability(
+        session_id: str,
+        source_method: str,
+        target_method: str
+    ) -> Dict[str, Any]:
+        """
+        Check if one method can reach another through the call graph.
+        
+        Determines whether the target method is reachable from the source method
+        by following function calls. Useful for understanding code dependencies
+        and potential execution paths.
+        
+        Args:
+            session_id: The session ID from create_cpg_session
+            source_method: Name of the source method (can be regex pattern)
+            target_method: Name of the target method (can be regex pattern)
+        
+        Returns:
+            {
+                "success": true,
+                "reachable": true,
+                "source_method": "main",
+                "target_method": "helper",
+                "message": "Method 'helper' is reachable from 'main'"
+            }
+        """
+        try:
+            validate_session_id(session_id)
+            
+            session_manager = services['session_manager']
+            query_executor = services['query_executor']
+            
+            session = await session_manager.get_session(session_id)
+            if not session:
+                raise SessionNotFoundError(f"Session {session_id} not found")
+            
+            if session.status != SessionStatus.READY.value:
+                raise SessionNotReadyError(f"Session is in '{session.status}' status")
+            
+            await session_manager.touch_session(session_id)
+            
+            # Query to check reachability
+            query = f'cpg.method.name("{source_method}").reachableBy(cpg.method.name("{target_method}")).size > 0'
+            
+            result = await query_executor.execute_query(
+                session_id=session_id,
+                cpg_path="/workspace/cpg.bin",
+                query=query,
+                timeout=30,
+                limit=1
+            )
+            
+            if not result.success:
+                return {
+                    "success": False,
+                    "error": {
+                        "code": "QUERY_ERROR",
+                        "message": result.error
+                    }
+                }
+            
+            reachable = False
+            if result.data and len(result.data) > 0:
+                # The query returns a boolean result
+                reachable = bool(result.data[0])
+            
+            message = f"Method '{target_method}' is {'reachable' if reachable else 'not reachable'} from '{source_method}'"
+            
+            return {
+                "success": True,
+                "reachable": reachable,
+                "source_method": source_method,
+                "target_method": target_method,
+                "message": message
+            }
+            
+        except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
+            logger.error(f"Error checking method reachability: {e}")
             return {
                 "success": False,
                 "error": {

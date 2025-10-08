@@ -30,7 +30,8 @@ class SessionManager:
         source_type: str,
         source_path: str,
         language: str,
-        options: Dict[str, Any]
+        options: Dict[str, Any],
+        session_id: Optional[str] = None
     ) -> Session:
         """Create a new CPG session"""
         try:
@@ -40,9 +41,19 @@ class SessionManager:
                 logger.info(f"Session limit reached ({len(active_sessions)}/{self.config.max_concurrent}), cleaning up oldest sessions")
                 await self._cleanup_oldest_sessions(10)  # Clean up 10 oldest sessions
             
+            # Use provided session_id or generate new one
+            if session_id is None:
+                session_id = str(uuid.uuid4())
+            
+            # Check if session already exists
+            existing_session = await self.get_session(session_id)
+            if existing_session:
+                logger.info(f"Session {session_id} already exists, returning existing session")
+                return existing_session
+            
             # Create session
             session = Session(
-                id=str(uuid.uuid4()),
+                id=session_id,
                 source_type=source_type,
                 source_path=source_path,
                 language=language,

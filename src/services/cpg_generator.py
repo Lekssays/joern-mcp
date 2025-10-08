@@ -20,9 +20,9 @@ class CPGGenerator:
     # Language-specific Joern commands
     LANGUAGE_COMMANDS = {
         "java": "javasrc2cpg",
-        "c": "c2cpg",
-        "cpp": "c2cpg", 
-        "javascript": "jssrc2cpg",
+        "c": "c2cpg.sh",
+        "cpp": "c2cpg.sh",
+        "javascript": "jssrc2cpg.sh",
         "python": "pysrc2cpg",
         "go": "gosrc2cpg",
         "kotlin": "kotlin2cpg",
@@ -31,7 +31,7 @@ class CPGGenerator:
         "jimple": "jimple2cpg",
         "php": "php2cpg",
         "ruby": "rubysrc2cpg",
-        "swift": "swiftsrc2cpg",
+        "swift": "swiftsrc2cpg.sh",
     }
 
     def __init__(
@@ -116,12 +116,53 @@ class CPGGenerator:
             
             container = self.docker_client.containers.get(container_id)
             
-            # Generate CPG using Joern - store in playground/cpgs directory
-            cpg_filename = f"{session_id}.cpg"
-            cpg_output_path = f"/playground/cpgs/{cpg_filename}"
+            # Generate CPG using Joern - store in workspace directory
+            cpg_output_path = "/workspace/cpg.bin"
             base_cmd = self.LANGUAGE_COMMANDS[language]
-            joern_cmd = await self._find_joern_executable(container, base_cmd)
-            command = f"{joern_cmd} /workspace -o {cpg_output_path}"
+            joern_cmd = "/opt/joern/joern-cli/" + base_cmd
+            
+            # Build command with exclusions for C/C++ codebases
+            command_parts = [f"{joern_cmd} {source_path} -o {cpg_output_path}"]
+            
+            if language in ["c", "cpp"]:
+                # Combine all exclusion patterns into a single regex
+                exclusion_patterns = [
+                    ".*/examples/.*",
+                    ".*/docs?/.*", 
+                    ".*/fuzz/.*",
+                    ".*/test.*/.*",
+                    ".*/tests?/.*",
+                    ".*/sample.*/.*",
+                    ".*/demo.*/.*",
+                    ".*/benchmark.*/.*",
+                    ".*/perf.*/.*",
+                    ".*/tool.*/.*",
+                    ".*/script.*/.*",
+                    ".*/cmake/.*",
+                    ".*/m4/.*",
+                    ".*/autom4te.*/.*",
+                    ".*/\\.git/.*",
+                    ".*/\\.deps/.*",
+                    ".*_build/.*",
+                    ".*/build.*/.*",
+                    ".*/result.*/.*",
+                    ".*/python/.*",
+                    ".*/java/.*",
+                    ".*\\.md$",
+                    ".*\\.txt$",
+                    ".*\\.xml$",
+                    ".*\\.json$",
+                    ".*Makefile.*",
+                    ".*configure.*",
+                    ".*\\.am$",
+                    ".*\\.in$",
+                    ".*\\.log$",
+                    ".*\\.cache/.*"
+                ]
+                combined_regex = "|".join(f"({pattern})" for pattern in exclusion_patterns)
+                command_parts.append(f'--exclude-regex "{combined_regex}"')
+            
+            command = " ".join(command_parts)
             
             logger.info(f"Executing CPG generation command: {command}")
             
@@ -178,47 +219,6 @@ class CPGGenerator:
                     error_msg
                 )
             raise CPGGenerationError(error_msg)
-
-    async def _find_joern_executable(self, container, base_cmd: str) -> str:
-        """Find the correct path for Joern executable in container"""
-        try:
-            possible_paths = [
-                f"/opt/joern/joern-cli/{base_cmd}",  # Most likely location
-                f"/opt/joern/joern-cli/{base_cmd}.sh",  # Shell script version
-                f"/opt/joern/bin/{base_cmd}",  # Alternative location
-                f"/usr/local/bin/{base_cmd}",  # System location
-                base_cmd  # In PATH
-            ]
-            
-            loop = asyncio.get_event_loop()
-            
-            for path in possible_paths:
-                def _test_path():
-                    result = container.exec_run(f"test -x {path}")
-                    return result.exit_code
-                
-                exit_code = await loop.run_in_executor(None, _test_path)
-                if exit_code == 0:
-                    logger.info(f"Found Joern executable at: {path}")
-                    return path
-            
-            # Fallback - list what's available in the joern-cli directory
-            logger.warning("Joern executable not found in expected paths, listing available commands...")
-            
-            def _find_commands():
-                result = container.exec_run("ls -la /opt/joern/joern-cli/ | grep -E '(c2cpg|javasrc2cpg|pysrc2cpg|jssrc2cpg)' || echo 'Joern CLI tools not found'")
-                return result.output.decode('utf-8', errors='ignore')
-            
-            available = await loop.run_in_executor(None, _find_commands)
-            logger.info(f"Available Joern CLI tools: {available}")
-            
-            # Since the tools should be in PATH with our updated Dockerfile, try the base command
-            logger.info(f"Using base command in PATH: {base_cmd}")
-            return base_cmd
-            
-        except Exception as e:
-            logger.error(f"Error finding Joern executable: {e}")
-            return base_cmd
 
     async def _exec_command_async(self, container, command: str) -> str:
         """Execute command in container asynchronously"""
@@ -305,8 +305,48 @@ class CPGGenerator:
                 return
             
             base_cmd = self.LANGUAGE_COMMANDS[language]
-            joern_cmd = await self._find_joern_executable(container, base_cmd)
-            command = f"{joern_cmd} {source_path} -o {output_path}"
+            joern_cmd = "/opt/joern/joern-cli/" + base_cmd
+            command_parts = [f"{joern_cmd} {source_path} -o {output_path}"]
+
+            if language in ["c", "cpp"]:
+                # Combine all exclusion patterns into a single regex
+                exclusion_patterns = [
+                    ".*/examples/.*",
+                    ".*/docs?/.*", 
+                    ".*/fuzz/.*",
+                    ".*/test.*/.*",
+                    ".*/tests?/.*",
+                    ".*/sample.*/.*",
+                    ".*/demo.*/.*",
+                    ".*/benchmark.*/.*",
+                    ".*/perf.*/.*",
+                    ".*/tool.*/.*",
+                    ".*/script.*/.*",
+                    ".*/cmake/.*",
+                    ".*/m4/.*",
+                    ".*/autom4te.*/.*",
+                    ".*/\\.git/.*",
+                    ".*/\\.deps/.*",
+                    ".*_build/.*",
+                    ".*/build.*/.*",
+                    ".*/result.*/.*",
+                    ".*/python/.*",
+                    ".*/java/.*",
+                    ".*\\.md$",
+                    ".*\\.txt$",
+                    ".*\\.xml$",
+                    ".*\\.json$",
+                    ".*Makefile.*",
+                    ".*configure.*",
+                    ".*\\.am$",
+                    ".*\\.in$",
+                    ".*\\.log$",
+                    ".*\\.cache/.*"
+                ]
+                combined_regex = "|".join(f"({pattern})" for pattern in exclusion_patterns)
+                command_parts.append(f'--exclude-regex "{combined_regex}"')
+            
+            command = " ".join(command_parts)
             
             # Execute command and stream output
             exec_result = container.exec_run(command, stream=True, workdir="/workspace")
