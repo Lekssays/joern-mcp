@@ -4,7 +4,7 @@ Redis client wrapper for session management
 import json
 import logging
 from typing import Optional, Dict, Any, List
-import redis.asyncio as aioredis
+import redis.asyncio as redis
 
 from ..models import RedisConfig, Session
 
@@ -16,12 +16,12 @@ class RedisClient:
 
     def __init__(self, config: RedisConfig):
         self.config = config
-        self.client: Optional[aioredis.Redis] = None
+        self.client: Optional[redis.Redis] = None
 
     async def connect(self):
         """Establish Redis connection"""
         try:
-            self.client = await aioredis.from_url(
+            self.client = redis.from_url(
                 f"redis://{self.config.host}:{self.config.port}/{self.config.db}",
                 password=self.config.password,
                 decode_responses=self.config.decode_responses
