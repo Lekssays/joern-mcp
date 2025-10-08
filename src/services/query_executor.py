@@ -69,9 +69,9 @@ class QueryExecutor:
     async def execute_query_async(
         self,
         session_id: str,
-        cpg_path: str,
         query: str,
-        timeout: Optional[int] = None
+        timeout: Optional[int] = None,
+        limit: Optional[int] = 150
     ) -> str:
         """Execute a CPGQL query asynchronously and return query UUID"""
         try:
@@ -85,7 +85,7 @@ class QueryExecutor:
             container_cpg_path = "/workspace/cpg.bin"
             
             # Normalize query to ensure JSON output and pipe to file
-            query_normalized = self._normalize_query_for_json(query.strip())
+            query_normalized = self._normalize_query_for_json(query.strip(), limit)
             output_file = f"/tmp/query_{query_id}.json"
             query_with_pipe = f"{query_normalized} #> \"{output_file}\""
             
@@ -100,7 +100,7 @@ class QueryExecutor:
             }
             
             # Start async execution
-            asyncio.create_task(self._execute_query_background(query_id, session_id, container_cpg_path, query_with_pipe, timeout))
+            asyncio.create_task(self._execute_query_background(query_id, session_id, container_cpg_path, query_with_pipe, timeout, limit))
             
             logger.info(f"Started async query {query_id} for session {session_id}")
             return query_id
@@ -113,9 +113,8 @@ class QueryExecutor:
         self,
         query_id: str,
         session_id: str,
-        cpg_path: str,
         query_with_pipe: str,
-        timeout: Optional[int]
+        timeout: Optional[int],
     ):
         """Execute query in background"""
         try:
@@ -223,7 +222,8 @@ class QueryExecutor:
         session_id: str,
         cpg_path: str,
         query: str,
-        timeout: Optional[int] = None
+        timeout: Optional[int] = None,
+        limit: Optional[int] = 150
     ) -> QueryResult:
         """Execute a CPGQL query synchronously (for backwards compatibility)"""
         start_time = time.time()
@@ -233,7 +233,7 @@ class QueryExecutor:
             validate_cpgql_query(query)
             
             # Normalize query to ensure JSON output
-            query_normalized = self._normalize_query_for_json(query.strip())
+            query_normalized = self._normalize_query_for_json(query.strip(), limit)
             
             # Check cache if enabled
             if self.config.cache_enabled and self.redis:
@@ -339,7 +339,7 @@ class QueryExecutor:
         if to_cleanup:
             logger.info(f"Cleaned up {len(to_cleanup)} old queries")
 
-    def _normalize_query_for_json(self, query: str) -> str:
+    def _normalize_query_for_json(self, query: str, limit: Optional[int] = None) -> str:
         """Normalize query to ensure JSON output"""
         # Remove any existing output modifiers
         query = query.strip()
@@ -351,6 +351,10 @@ class QueryExecutor:
             query = query[:-7]
         elif query.endswith('.toJsonPretty'):
             query = query[:-13]
+        
+        # Add limit if specified
+        if limit is not None and limit > 0:
+            query = f"{query}.take({limit})"
         
         # Add .toJsonPretty for proper JSON output
         return query + '.toJsonPretty'
