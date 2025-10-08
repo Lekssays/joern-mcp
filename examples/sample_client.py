@@ -51,7 +51,7 @@ async def demonstrate_joern_mcp():
         logger.info("\n📁 Creating CPG session...")
         session_result = await client.call_tool("create_cpg_session", {
             "source_type": "local",
-            "source_path": "playground/codebases/sample",
+            "source_path": "./../playground/codebases/sample",
             "language": "c"
         })
         

@@ -84,6 +84,17 @@ python main.py
 - **`close_session`**: Clean up session resources
 - **`list_queries`**: Get pre-built security and quality queries
 
+### Code Browsing Tools
+
+- **`get_codebase_summary`**: Get high-level overview of codebase (file count, method count, language)
+- **`list_files`**: List all source files with optional regex filtering
+- **`list_methods`**: Discover all methods/functions with filtering by name, file, or external status
+- **`get_method_source`**: Retrieve actual source code for specific methods
+- **`list_calls`**: Find function call relationships and dependencies
+- **`get_call_graph`**: Build call graphs (outgoing callees or incoming callers) with configurable depth
+- **`list_parameters`**: Get detailed parameter information for methods
+- **`find_literals`**: Search for hardcoded values (strings, numbers, API keys, etc)
+
 ### Example Usage
 
 ```python
@@ -97,7 +108,55 @@ python main.py
   }
 }
 
-# Run query
+# Get codebase overview
+{
+  "tool": "get_codebase_summary",
+  "arguments": {
+    "session_id": "abc-123-def"
+  }
+}
+
+# List all methods in the codebase
+{
+  "tool": "list_methods",
+  "arguments": {
+    "session_id": "abc-123-def",
+    "include_external": false,
+    "limit": 50
+  }
+}
+
+# Get source code for a specific method
+{
+  "tool": "get_method_source",
+  "arguments": {
+    "session_id": "abc-123-def",
+    "method_name": "authenticate"
+  }
+}
+
+# Find what methods call a specific function
+{
+  "tool": "get_call_graph",
+  "arguments": {
+    "session_id": "abc-123-def",
+    "method_name": "execute_query",
+    "depth": 2,
+    "direction": "incoming"
+  }
+}
+
+# Search for hardcoded secrets
+{
+  "tool": "find_literals",
+  "arguments": {
+    "session_id": "abc-123-def",
+    "pattern": "(?i).*(password|secret|api_key).*",
+    "limit": 20
+  }
+}
+
+# Run custom CPGQL query
 {
   "tool": "run_cpgql_query",
   "arguments": {
