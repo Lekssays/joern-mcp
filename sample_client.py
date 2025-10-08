@@ -177,15 +177,7 @@ async def demonstrate_joern_mcp():
                     
                 await asyncio.sleep(5)
         
-        # 7. List all queries
-        logger.info("\n📊 Listing queries...")
-        queries_result = await client.call_tool("list_queries")
-        queries_dict = extract_tool_result(queries_result)
-        if queries_dict.get("success"):
-            total = queries_dict.get("total", 0)
-            logger.info(f"  Total queries: {total}")
-        
-        # 8. List all sessions
+        # 7. List all sessions
         logger.info("\n📋 Listing sessions...")
         sessions_result = await client.call_tool("list_sessions")
         sessions_dict = extract_tool_result(sessions_result)
@@ -196,7 +188,7 @@ async def demonstrate_joern_mcp():
             for session in sessions_dict["sessions"]:
                 logger.info(f"    {session['session_id']}: {session['status']} ({session['language']})")
         
-        # 9. Filter sessions by status
+        # 8. Filter sessions by status
         logger.info("\n🔎 Filtering sessions...")
         ready_sessions_result = await client.call_tool("list_sessions", {"status": "ready"})
         ready_sessions_dict = extract_tool_result(ready_sessions_result)
@@ -204,7 +196,7 @@ async def demonstrate_joern_mcp():
             count = len(ready_sessions_dict["sessions"])
             logger.info(f"  Ready sessions: {count}")
         
-        # 10. GitHub session example (commented out to avoid actual cloning)
+        # 9. GitHub session example (commented out to avoid actual cloning)
         """
         logger.info("\n🐙 Creating GitHub session...")
         github_result = await client.call_tool("create_cpg_session", {
@@ -216,7 +208,7 @@ async def demonstrate_joern_mcp():
         logger.info(f"GitHub session: {github_result}")
         """
         
-        # 11. Cleanup queries
+        # 10. Cleanup queries
         logger.info("\n🧹 Cleaning up queries...")
         cleanup_result = await client.call_tool("cleanup_queries", {
             "max_age_hours": 0  # Clean all
@@ -228,7 +220,7 @@ async def demonstrate_joern_mcp():
             cleaned = cleanup_dict.get("cleaned_up", 0)
             logger.info(f"  ✅ Cleaned up {cleaned} queries")
         
-        # 12. Close session
+        # 11. Close session
         logger.info(f"\n🔒 Closing session {session_id}...")
         close_result = await client.call_tool("close_session", {
             "session_id": session_id
