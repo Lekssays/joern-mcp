@@ -1092,11 +1092,11 @@ def register_tools(mcp, services: dict):
         pattern: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        List all source files in the analyzed codebase.
+        List all source files in the analyzed codebase as a file tree.
         
         This tool helps discover the structure of the codebase by listing all files
         that were analyzed. Useful for understanding project layout and finding
-        specific files of interest.
+        specific files of interest. Directories with more than 20 files will be truncated.
         
         Args:
             session_id: The session ID from create_cpg_session
@@ -1105,11 +1105,13 @@ def register_tools(mcp, services: dict):
         Returns:
             {
                 "success": true,
-                "files": [
-                    {"name": "main.c", "path": "/path/to/main.c"},
-                    {"name": "utils.c", "path": "/path/to/utils.c"}
-                ],
-                "total": 2
+                "tree": {
+                    "src": {
+                        "main.py": None,
+                        "api": { ... }
+                    }
+                },
+                "total": 15
             }
         """
         try:
@@ -1127,14 +1129,14 @@ def register_tools(mcp, services: dict):
             
             await session_manager.touch_session(session_id)
             
-            # Query for all files
-            query = "cpg.file.map(f => (f.name, f.name))"
+            # Query for all file paths
+            query = "cpg.file.name.l"
             result = await query_executor.execute_query(
                 session_id=session_id,
                 cpg_path="/workspace/cpg.bin",
                 query=query,
                 timeout=30,
-                limit=500  # Reasonable limit for file listing
+                limit=10000  # High limit for file listing
             )
             
             if not result.success:
@@ -1146,27 +1148,51 @@ def register_tools(mcp, services: dict):
                     }
                 }
             
-            files = []
-            for item in result.data:
-                if isinstance(item, dict) and "_1" in item:
-                    file_path = item["_1"]
-                    file_name = file_path.split("/")[-1] if "/" in file_path else file_path
-                    
-                    # Apply pattern filter if provided
-                    if pattern:
-                        import re
-                        if not re.search(pattern, file_path):
-                            continue
-                    
-                    files.append({
-                        "name": file_name,
-                        "path": file_path
-                    })
+            file_paths = result.data
+            
+            # Apply pattern filter if provided
+            if pattern:
+                import re
+                file_paths = [p for p in file_paths if re.search(pattern, p)]
+
+            # Build the file tree
+            tree = {}
+            for path in file_paths:
+                parts = path.split('/')
+                # Filter out empty parts that can result from leading slashes
+                parts = [part for part in parts if part]
+                
+                current_level = tree
+                for i, part in enumerate(parts):
+                    if i == len(parts) - 1:
+                        # It's a file
+                        current_level[part] = None
+                    else:
+                        # It's a directory
+                        if part not in current_level:
+                            current_level[part] = {}
+                        current_level = current_level[part]
+
+            # Function to truncate large directories (only truncate subfolders, not base level)
+            def truncate_tree(node, is_base_level=True):
+                if isinstance(node, dict):
+                    if not is_base_level and len(node) > 20:
+                        # Only truncate if we're not at the base level
+                        keys = sorted(node.keys())
+                        truncated_node = {key: truncate_tree(node[key], False) for key in keys[:20]}
+                        truncated_node[f"... ({len(node) - 20} more files)"] = None
+                        return truncated_node
+                    else:
+                        # For base level or smaller directories, show all entries
+                        return {key: truncate_tree(value, False) for key, value in node.items()}
+                return node
+
+            truncated_tree_structure = truncate_tree(tree, True)
             
             return {
                 "success": True,
-                "files": files,
-                "total": len(files)
+                "tree": truncated_tree_structure,
+                "total": len(file_paths)
             }
             
         except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
@@ -1193,6 +1219,7 @@ def register_tools(mcp, services: dict):
         session_id: str,
         name_pattern: Optional[str] = None,
         file_pattern: Optional[str] = None,
+        callee_pattern: Optional[str] = None,
         include_external: bool = False,
         limit: int = 100
     ) -> Dict[str, Any]:
@@ -1207,8 +1234,9 @@ def register_tools(mcp, services: dict):
             session_id: The session ID from create_cpg_session
             name_pattern: Optional regex to filter method names (e.g., ".*authenticate.*")
             file_pattern: Optional regex to filter by file path
+            callee_pattern: Optional regex to filter for methods that call a specific function (e.g., "memcpy|free|malloc")
             include_external: Include external/library methods (default: false)
-            limit: Maximum number of results (default: 100)
+            limit: Maximum number of results to return. This can be overridden. Default is 100.
         
         Returns:
             {
@@ -1251,18 +1279,21 @@ def register_tools(mcp, services: dict):
                 query_parts.append(f'.name("{name_pattern}")')
             
             if file_pattern:
-                query_parts.append(f'.filename("{file_pattern}")')
+                query_parts.append(f'.where(_.file.name("{file_pattern}"))')
+
+            if callee_pattern:
+                query_parts.append(f'.where(_.callOut.name("{callee_pattern}"))')
             
             query_parts.append(".map(m => (m.name, m.fullName, m.signature, m.filename, m.lineNumber.getOrElse(-1), m.isExternal))")
             
-            query = "".join(query_parts) + f".take({limit})"
+            query = "".join(query_parts) + f".dedup.take({limit}).l"
             
             result = await query_executor.execute_query(
                 session_id=session_id,
                 cpg_path="/workspace/cpg.bin",
                 query=query,
                 timeout=30,
-                limit=limit  # Use the limit parameter
+                limit=limit
             )
             
             if not result.success:
@@ -1469,20 +1500,25 @@ def register_tools(mcp, services: dict):
             
             # Build query
             query_parts = ["cpg.call"]
-            
+
             if callee_pattern:
                 query_parts.append(f'.name("{callee_pattern}")')
+
+            if caller_pattern:
+                query_parts.append(f'.where(_.method.name("{caller_pattern}"))')
             
-            query_parts.append(".map(c => (c.method.name, c.name, c.code, c.filename, c.lineNumber.getOrElse(-1)))")
+            query_parts.append(".map(c => (c.method.name, c.name, c.code, c.method.filename, c.lineNumber.getOrElse(-1)))")
             
-            query = "".join(query_parts) + f".take({limit})"
+            query = "".join(query_parts) + f".dedup.take({limit}).toJsonPretty"
+            
+            logger.info(f"list_calls query: {query}")
             
             result = await query_executor.execute_query(
                 session_id=session_id,
                 cpg_path="/workspace/cpg.bin",
                 query=query,
                 timeout=30,
-                limit=limit  # Use the limit parameter
+                limit=limit
             )
             
             if not result.success:
@@ -1497,16 +1533,8 @@ def register_tools(mcp, services: dict):
             calls = []
             for item in result.data:
                 if isinstance(item, dict):
-                    caller = item.get("_1", "")
-                    
-                    # Apply caller filter if provided
-                    if caller_pattern:
-                        import re
-                        if not re.search(caller_pattern, caller):
-                            continue
-                    
                     calls.append({
-                        "caller": caller,
+                        "caller": item.get("_1", ""),
                         "callee": item.get("_2", ""),
                         "code": item.get("_3", ""),
                         "filename": item.get("_4", ""),

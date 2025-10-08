@@ -131,6 +131,153 @@ class CPGConfig:
     supported_languages: List[str] = field(default_factory=lambda: [
         "java", "c", "cpp", "javascript", "python", "go", "kotlin", "csharp", "ghidra", "jimple", "php", "ruby", "swift"
     ])
+    # Exclusion patterns for CPG generation to focus on core functionality
+    exclusion_patterns: List[str] = field(default_factory=lambda: [
+        # Hidden files and directories (starting with .)
+        ".*/\\..*",
+        "\\..*",
+        
+        # Test and fuzzing directories (both root level and nested, with wildcards)
+        ".*/test.*",
+        "test.*",
+        ".*/fuzz.*",
+        "fuzz.*",
+        ".*/Testing.*",
+        "Testing.*",
+        ".*/spec.*",
+        "spec.*",
+        ".*/__tests__/.*",
+        "__tests__/.*",
+        ".*/e2e.*",
+        "e2e.*",
+        ".*/integration.*",
+        "integration.*",
+        ".*/unit.*",
+        "unit.*",
+        ".*/benchmark.*",
+        "benchmark.*",
+        ".*/perf.*",
+        "perf.*",
+        
+        # Documentation and examples (both root level and nested, with wildcards)
+        ".*/docs?/.*",
+        "docs?/.*",
+        ".*/documentation.*",
+        "documentation.*",
+        ".*/example.*",
+        "example.*",
+        ".*/sample.*",
+        "sample.*",
+        ".*/demo.*",
+        "demo.*",
+        ".*/tutorial.*",
+        "tutorial.*",
+        ".*/guide.*",
+        "guide.*",
+        
+        # Build and development artifacts
+        ".*/build.*/.*",
+        ".*_build/.*",
+        ".*/target/.*",
+        ".*/out/.*",
+        ".*/dist/.*",
+        ".*/bin/.*",
+        ".*/obj/.*",
+        ".*/Debug/.*",
+        ".*/Release/.*",
+        ".*/cmake/.*",
+        ".*/m4/.*",
+        ".*/autom4te.*/.*",
+        ".*/autotools/.*",
+        
+        # Version control and dependencies
+        ".*/\\.git/.*",
+        ".*/\\.svn/.*",
+        ".*/\\.hg/.*",
+        ".*/\\.deps/.*",
+        ".*/node_modules/.*",
+        ".*/vendor/.*",
+        ".*/third_party/.*",
+        ".*/extern/.*",
+        ".*/external/.*",
+        ".*/packages/.*",
+        
+        # Performance and profiling
+        ".*/benchmark.*/.*",
+        ".*/perf.*/.*",
+        ".*/profile.*/.*",
+        ".*/bench/.*",
+        
+        # Tools and scripts  
+        ".*/tool.*/.*",
+        ".*/script.*/.*",
+        ".*/utils/.*",
+        ".*/util/.*",
+        ".*/helper.*/.*",
+        ".*/misc/.*",
+        
+        # Language-specific binding/wrapper directories
+        ".*/python/.*",
+        ".*/java/.*",
+        ".*/ruby/.*",
+        ".*/perl/.*",
+        ".*/php/.*",
+        ".*/csharp/.*",
+        ".*/dotnet/.*",
+        ".*/go/.*",
+        
+        # Generated and temporary files
+        ".*/generated/.*",
+        ".*/gen/.*",
+        ".*/temp/.*",
+        ".*/tmp/.*",
+        ".*/cache/.*",
+        ".*/\\.cache/.*",
+        ".*/log.*/.*",
+        ".*/logs/.*",
+        ".*/result.*/.*",
+        ".*/results/.*",
+        ".*/output/.*",
+        
+        # Configuration and metadata files (by extension)
+        ".*\\.md$",
+        ".*\\.txt$",
+        ".*\\.xml$",
+        ".*\\.json$",
+        ".*\\.yaml$",
+        ".*\\.yml$",
+        ".*\\.toml$",
+        ".*\\.ini$",
+        ".*\\.cfg$",
+        ".*\\.conf$",
+        ".*\\.properties$",
+        ".*\\.cmake$",
+        ".*Makefile.*",
+        ".*makefile.*",
+        ".*configure.*",
+        ".*\\.am$",
+        ".*\\.in$",
+        ".*\\.ac$",
+        ".*\\.log$",
+        ".*\\.cache$",
+        ".*\\.lock$",
+        ".*\\.tmp$",
+        ".*\\.bak$",
+        ".*\\.orig$",
+        ".*\\.swp$",
+        ".*~$",
+        
+        # IDE and editor files
+        ".*/\\.vscode/.*",
+        ".*/\\.idea/.*",
+        ".*/\\.eclipse/.*",
+        ".*\\.DS_Store$",
+        ".*Thumbs\\.db$"
+    ])
+    # Languages that support exclusion patterns
+    languages_with_exclusions: List[str] = field(default_factory=lambda: [
+        "c", "cpp", "java", "javascript", "python", "go", "kotlin", "csharp", "php", "ruby"
+    ])
 
 
 @dataclass

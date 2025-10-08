@@ -121,45 +121,13 @@ class CPGGenerator:
             base_cmd = self.LANGUAGE_COMMANDS[language]
             joern_cmd = "/opt/joern/joern-cli/" + base_cmd
             
-            # Build command with exclusions for C/C++ codebases
+            # Build command with exclusions for various languages to focus on core functionality
             command_parts = [f"{joern_cmd} {source_path} -o {cpg_output_path}"]
             
-            if language in ["c", "cpp"]:
-                # Combine all exclusion patterns into a single regex
-                exclusion_patterns = [
-                    ".*/examples/.*",
-                    ".*/docs?/.*", 
-                    ".*/fuzz/.*",
-                    ".*/test.*/.*",
-                    ".*/tests?/.*",
-                    ".*/sample.*/.*",
-                    ".*/demo.*/.*",
-                    ".*/benchmark.*/.*",
-                    ".*/perf.*/.*",
-                    ".*/tool.*/.*",
-                    ".*/script.*/.*",
-                    ".*/cmake/.*",
-                    ".*/m4/.*",
-                    ".*/autom4te.*/.*",
-                    ".*/\\.git/.*",
-                    ".*/\\.deps/.*",
-                    ".*_build/.*",
-                    ".*/build.*/.*",
-                    ".*/result.*/.*",
-                    ".*/python/.*",
-                    ".*/java/.*",
-                    ".*\\.md$",
-                    ".*\\.txt$",
-                    ".*\\.xml$",
-                    ".*\\.json$",
-                    ".*Makefile.*",
-                    ".*configure.*",
-                    ".*\\.am$",
-                    ".*\\.in$",
-                    ".*\\.log$",
-                    ".*\\.cache/.*"
-                ]
-                combined_regex = "|".join(f"({pattern})" for pattern in exclusion_patterns)
+            # Apply exclusions for languages that support them
+            if language in self.config.languages_with_exclusions and self.config.exclusion_patterns:
+                # Use exclusion patterns from configuration
+                combined_regex = "|".join(f"({pattern})" for pattern in self.config.exclusion_patterns)
                 command_parts.append(f'--exclude-regex "{combined_regex}"')
             
             command = " ".join(command_parts)
@@ -308,42 +276,10 @@ class CPGGenerator:
             joern_cmd = "/opt/joern/joern-cli/" + base_cmd
             command_parts = [f"{joern_cmd} {source_path} -o {output_path}"]
 
-            if language in ["c", "cpp"]:
-                # Combine all exclusion patterns into a single regex
-                exclusion_patterns = [
-                    ".*/examples/.*",
-                    ".*/docs?/.*", 
-                    ".*/fuzz/.*",
-                    ".*/test.*/.*",
-                    ".*/tests?/.*",
-                    ".*/sample.*/.*",
-                    ".*/demo.*/.*",
-                    ".*/benchmark.*/.*",
-                    ".*/perf.*/.*",
-                    ".*/tool.*/.*",
-                    ".*/script.*/.*",
-                    ".*/cmake/.*",
-                    ".*/m4/.*",
-                    ".*/autom4te.*/.*",
-                    ".*/\\.git/.*",
-                    ".*/\\.deps/.*",
-                    ".*_build/.*",
-                    ".*/build.*/.*",
-                    ".*/result.*/.*",
-                    ".*/python/.*",
-                    ".*/java/.*",
-                    ".*\\.md$",
-                    ".*\\.txt$",
-                    ".*\\.xml$",
-                    ".*\\.json$",
-                    ".*Makefile.*",
-                    ".*configure.*",
-                    ".*\\.am$",
-                    ".*\\.in$",
-                    ".*\\.log$",
-                    ".*\\.cache/.*"
-                ]
-                combined_regex = "|".join(f"({pattern})" for pattern in exclusion_patterns)
+            # Apply exclusions for languages that support them
+            if language in self.config.languages_with_exclusions and self.config.exclusion_patterns:
+                # Use exclusion patterns from configuration
+                combined_regex = "|".join(f"({pattern})" for pattern in self.config.exclusion_patterns)
                 command_parts.append(f'--exclude-regex "{combined_regex}"')
             
             command = " ".join(command_parts)
