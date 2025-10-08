@@ -29,6 +29,11 @@ cpg:
     - python
     - go
     - kotlin
+    - csharp
+    - ghidra
+    - jimple
+    - php
+    - ruby
     - swift
 
 query:

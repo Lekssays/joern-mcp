@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server that provides AI assistants with static co
 
 ## Features
 
-- **Multi-Language Support**: Java, C/C++, JavaScript, Python, Go, Kotlin, Swift
+- **Multi-Language Support**: Java, C/C++, JavaScript, Python, Go, Kotlin, C#, Ghidra, Jimple, PHP, Ruby, Swift
 - **Docker Isolation**: Each analysis session runs in a secure container
 - **GitHub Integration**: Analyze repositories directly from GitHub URLs
 - **Session-Based**: Persistent CPG sessions with automatic cleanup
@@ -150,7 +150,7 @@ sessions:
 
 cpg:
   generation_timeout: 600  # CPG generation timeout (seconds)
-  supported_languages: [java, c, cpp, javascript, python, go, kotlin, swift]
+  supported_languages: [java, c, cpp, javascript, python, go, kotlin, csharp, ghidra, jimple, php, ruby, swift]
 ```
 
 Environment variables override config file settings (e.g., `MCP_HOST`, `REDIS_HOST`, `SESSION_TTL`).

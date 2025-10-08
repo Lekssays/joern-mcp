@@ -129,7 +129,7 @@ class CPGConfig:
     generation_timeout: int = 600  # 10 minutes
     max_repo_size_mb: int = 500
     supported_languages: List[str] = field(default_factory=lambda: [
-        "java", "c", "cpp", "javascript", "python", "go", "kotlin"
+        "java", "c", "cpp", "javascript", "python", "go", "kotlin", "csharp", "ghidra", "jimple", "php", "ruby", "swift"
     ])
 
 

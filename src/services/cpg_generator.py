@@ -26,6 +26,12 @@ class CPGGenerator:
         "python": "pysrc2cpg",
         "go": "gosrc2cpg",
         "kotlin": "kotlin2cpg",
+        "csharp": "csharpsrc2cpg",
+        "ghidra": "ghidra2cpg",
+        "jimple": "jimple2cpg",
+        "php": "php2cpg",
+        "ruby": "rubysrc2cpg",
+        "swift": "swiftsrc2cpg",
     }
 
     def __init__(

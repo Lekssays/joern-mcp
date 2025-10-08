@@ -67,7 +67,7 @@ def register_tools(mcp, services: dict):
             source_type: Either "local" or "github"
             source_path: For local: absolute path to source directory
                         For github: full GitHub URL (e.g., https://github.com/user/repo)
-            language: Programming language - one of: java, c, cpp, javascript, python, go, kotlin
+            language: Programming language - one of: java, c, cpp, javascript, python, go, kotlin, csharp, ghidra, jimple, php, ruby, swift
             github_token: GitHub Personal Access Token for private repositories (optional)
             branch: Specific git branch to checkout (optional, defaults to default branch)
         
@@ -332,7 +332,8 @@ def register_tools(mcp, services: dict):
     async def run_cpgql_query_async(
         session_id: str,
         query: str,
-        timeout: int = 30
+        timeout: int = 30,
+        limit: Optional[int] = 150
     ) -> Dict[str, Any]:
         """
         Executes a CPGQL query asynchronously and returns a query ID for status tracking.
@@ -345,6 +346,7 @@ def register_tools(mcp, services: dict):
             session_id: The session ID returned from create_cpg_session
             query: CPGQL query string (automatically converted to JSON output)
             timeout: Maximum execution time in seconds (default: 30)
+            limit: Maximum number of results to return (default: 150)
         
         Returns:
             {
@@ -381,7 +383,8 @@ def register_tools(mcp, services: dict):
                 session_id=session_id,
                 cpg_path=session.cpg_path,
                 query=query,
-                timeout=timeout
+                timeout=timeout,
+                limit=limit
             )
             
             return {
@@ -767,7 +770,8 @@ def register_tools(mcp, services: dict):
     async def run_cpgql_query(
         session_id: str,
         query: str,
-        timeout: int = 30
+        timeout: int = 30,
+        limit: Optional[int] = 150
     ) -> Dict[str, Any]:
         """
         Executes a CPGQL query synchronously on a loaded CPG.
@@ -780,6 +784,7 @@ def register_tools(mcp, services: dict):
             session_id: The session ID returned from create_cpg_session
             query: CPGQL query string (automatically converted to JSON output)
             timeout: Maximum execution time in seconds (default: 30)
+            limit: Maximum number of results to return (default: 150)
         
         Returns:
             {
@@ -821,7 +826,8 @@ def register_tools(mcp, services: dict):
                 session_id=session_id,
                 cpg_path=container_cpg_path,
                 query=query,
-                timeout=timeout
+                timeout=timeout,
+                limit=limit
             )
             
             return {

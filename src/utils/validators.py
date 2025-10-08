@@ -21,7 +21,7 @@ def validate_source_type(source_type: str):
 
 def validate_language(language: str):
     """Validate programming language"""
-    supported = ["java", "c", "cpp", "javascript", "python", "go", "kotlin"]
+    supported = ["java", "c", "cpp", "javascript", "python", "go", "kotlin", "csharp", "ghidra", "jimple", "php", "ruby", "swift"]
     if language not in supported:
         raise ValidationError(
             f"Unsupported language '{language}'. Supported: {', '.join(supported)}"
