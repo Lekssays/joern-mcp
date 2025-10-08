@@ -35,6 +35,159 @@ cpg:
     - php
     - ruby
     - swift
+  exclusion_patterns:
+    # Hidden files and directories (starting with .)
+    - ".*/\\..*"
+    - "\\..*"
+    
+    # Test and fuzzing directories (both root level and nested, with wildcards)
+    - ".*/test.*"
+    - "test.*"
+    - ".*/fuzz.*"
+    - "fuzz.*"
+    - ".*/Testing.*"
+    - "Testing.*"
+    - ".*/spec.*"
+    - "spec.*"
+    - ".*/__tests__/.*"
+    - "__tests__/.*"
+    - ".*/e2e.*"
+    - "e2e.*"
+    - ".*/integration.*"
+    - "integration.*"
+    - ".*/unit.*"
+    - "unit.*"
+    - ".*/benchmark.*"
+    - "benchmark.*"
+    - ".*/perf.*"
+    - "perf.*"
+    
+    # Documentation and examples (both root level and nested, with wildcards)
+    - ".*/docs?/.*"
+    - "docs?/.*"
+    - ".*/documentation.*"
+    - "documentation.*"
+    - ".*/example.*"
+    - "example.*"
+    - ".*/sample.*"
+    - "sample.*"
+    - ".*/demo.*"
+    - "demo.*"
+    - ".*/tutorial.*"
+    - "tutorial.*"
+    - ".*/guide.*"
+    - "guide.*"
+    
+    # Build and development artifacts
+    - ".*/build.*/.*"
+    - ".*_build/.*"
+    - ".*/target/.*"
+    - ".*/out/.*"
+    - ".*/dist/.*"
+    - ".*/bin/.*"
+    - ".*/obj/.*"
+    - ".*/Debug/.*"
+    - ".*/Release/.*"
+    - ".*/cmake/.*"
+    - ".*/m4/.*"
+    - ".*/autom4te.*/.*"
+    - ".*/autotools/.*"
+    
+    # Version control and dependencies
+    - ".*/\\.git/.*"
+    - ".*/\\.svn/.*"
+    - ".*/\\.hg/.*"
+    - ".*/\\.deps/.*"
+    - ".*/node_modules/.*"
+    - ".*/vendor/.*"
+    - ".*/third_party/.*"
+    - ".*/extern/.*"
+    - ".*/external/.*"
+    - ".*/packages/.*"
+    
+    # Performance and profiling
+    - ".*/benchmark.*/.*"
+    - ".*/perf.*/.*"
+    - ".*/profile.*/.*"
+    - ".*/bench/.*"
+    
+    # Tools and scripts  
+    - ".*/tool.*/.*"
+    - ".*/script.*/.*"
+    - ".*/utils/.*"
+    - ".*/util/.*"
+    - ".*/helper.*/.*"
+    - ".*/misc/.*"
+    
+    # Language-specific binding/wrapper directories
+    - ".*/python/.*"
+    - ".*/java/.*"
+    - ".*/ruby/.*"
+    - ".*/perl/.*"
+    - ".*/php/.*"
+    - ".*/csharp/.*"
+    - ".*/dotnet/.*"
+    - ".*/go/.*"
+    
+    # Generated and temporary files
+    - ".*/generated/.*"
+    - ".*/gen/.*"
+    - ".*/temp/.*"
+    - ".*/tmp/.*"
+    - ".*/cache/.*"
+    - ".*/\\.cache/.*"
+    - ".*/log.*/.*"
+    - ".*/logs/.*"
+    - ".*/result.*/.*"
+    - ".*/results/.*"
+    - ".*/output/.*"
+    
+    # Configuration and metadata files (by extension)
+    - ".*\\.md$"
+    - ".*\\.txt$"
+    - ".*\\.xml$"
+    - ".*\\.json$"
+    - ".*\\.yaml$"
+    - ".*\\.yml$"
+    - ".*\\.toml$"
+    - ".*\\.ini$"
+    - ".*\\.cfg$"
+    - ".*\\.conf$"
+    - ".*\\.properties$"
+    - ".*\\.cmake$"
+    - ".*Makefile.*"
+    - ".*makefile.*"
+    - ".*configure.*"
+    - ".*\\.am$"
+    - ".*\\.in$"
+    - ".*\\.ac$"
+    - ".*\\.log$"
+    - ".*\\.cache$"
+    - ".*\\.lock$"
+    - ".*\\.tmp$"
+    - ".*\\.bak$"
+    - ".*\\.orig$"
+    - ".*\\.swp$"
+    - ".*~$"
+    
+    # IDE and editor files
+    - ".*/\\.vscode/.*"
+    - ".*/\\.idea/.*"
+    - ".*/\\.eclipse/.*"
+    - ".*\\.DS_Store$"
+    - ".*Thumbs\\.db$"
+  
+  languages_with_exclusions:
+    - c
+    - cpp
+    - java
+    - javascript
+    - python
+    - go
+    - kotlin
+    - csharp
+    - php
+    - ruby
 
 query:
   timeout: ${QUERY_TIMEOUT:30}
