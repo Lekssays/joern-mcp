@@ -67,7 +67,7 @@ def register_tools(mcp, services: dict):
             source_type: Either "local" or "github"
             source_path: For local: absolute path to source directory
                         For github: full GitHub URL (e.g., https://github.com/user/repo)
-            language: Programming language - one of: java, c, cpp, javascript, python, go, kotlin
+            language: Programming language - one of: java, c, cpp, javascript, python, go, kotlin, csharp, ghidra, jimple, php, ruby, swift
             github_token: GitHub Personal Access Token for private repositories (optional)
             branch: Specific git branch to checkout (optional, defaults to default branch)
         
