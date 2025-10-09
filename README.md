@@ -94,6 +94,7 @@ python main.py
 - **`get_call_graph`**: Build call graphs (outgoing callees or incoming callers) with configurable depth
 - **`list_parameters`**: Get detailed parameter information for methods
 - **`find_literals`**: Search for hardcoded values (strings, numbers, API keys, etc)
+- **`get_code_snippet`**: Retrieve code snippets from files with line range
 
 ### Example Usage
 
@@ -153,6 +154,17 @@ python main.py
     "session_id": "abc-123-def",
     "pattern": "(?i).*(password|secret|api_key).*",
     "limit": 20
+  }
+}
+
+# Get code snippet from a file
+{
+  "tool": "get_code_snippet",
+  "arguments": {
+    "session_id": "abc-123-def",
+    "filename": "src/main.c",
+    "start_line": 10,
+    "end_line": 25
   }
 }
 

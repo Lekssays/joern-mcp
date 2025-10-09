@@ -194,9 +194,9 @@ class TestCPGGenerator:
         """Test language to command mapping"""
         expected_commands = {
             "java": "javasrc2cpg",
-            "c": "c2cpg",
-            "cpp": "c2cpg",
-            "javascript": "jssrc2cpg",
+            "c": "c2cpg.sh",
+            "cpp": "c2cpg.sh",
+            "javascript": "jssrc2cpg.sh",
             "python": "pysrc2cpg",
             "go": "gosrc2cpg",
             "kotlin": "kotlin2cpg",
@@ -205,7 +205,7 @@ class TestCPGGenerator:
             "jimple": "jimple2cpg",
             "php": "php2cpg",
             "ruby": "rubysrc2cpg",
-            "swift": "swiftsrc2cpg",
+            "swift": "swiftsrc2cpg.sh",
         }
 
         assert cpg_generator.LANGUAGE_COMMANDS == expected_commands
@@ -232,7 +232,7 @@ class TestCPGGenerator:
 
         result = await cpg_generator._find_joern_executable(mock_container, "javasrc2cpg")
 
-        assert result == "javasrc2cpg"  # Falls back to base command
+        assert result == "/opt/joern/joern-cli/javasrc2cpg"  # Always returns full path
 
     @pytest.mark.asyncio
     async def test_validate_cpg_success(self, cpg_generator):

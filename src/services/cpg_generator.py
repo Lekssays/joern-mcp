@@ -119,7 +119,7 @@ class CPGGenerator:
             # Generate CPG using Joern - store in workspace directory
             cpg_output_path = "/workspace/cpg.bin"
             base_cmd = self.LANGUAGE_COMMANDS[language]
-            joern_cmd = "/opt/joern/joern-cli/" + base_cmd
+            joern_cmd = await self._find_joern_executable(container, base_cmd)
             
             # Build command with exclusions for various languages to focus on core functionality
             command_parts = [f"{joern_cmd} {source_path} -o {cpg_output_path}"]
@@ -198,6 +198,10 @@ class CPGGenerator:
         
         return await loop.run_in_executor(None, _exec_sync)
 
+    async def _find_joern_executable(self, container, base_command: str) -> str:
+        """Find the full path to a Joern executable in the container"""
+        return f"/opt/joern/joern-cli/{base_command}"
+
     async def _validate_cpg_async(self, container, cpg_path: str) -> bool:
         """Validate that CPG file was created successfully"""
         try:
@@ -273,7 +277,7 @@ class CPGGenerator:
                 return
             
             base_cmd = self.LANGUAGE_COMMANDS[language]
-            joern_cmd = "/opt/joern/joern-cli/" + base_cmd
+            joern_cmd = await self._find_joern_executable(container, base_cmd)
             command_parts = [f"{joern_cmd} {source_path} -o {output_path}"]
 
             # Apply exclusions for languages that support them

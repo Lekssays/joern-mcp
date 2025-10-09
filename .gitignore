@@ -134,3 +134,4 @@ build.log
 .github/
 .vscode/
 playground/codebases/*
+!playground/codebases/core/

@@ -13,6 +13,7 @@ and understand a codebase. These tools help LLMs to:
 import asyncio
 import logging
 import sys
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -125,6 +126,32 @@ async def explore_codebase_workflow(client, session_id):
             logger.info("  ℹ️  No methods found matching 'main'")
     else:
         logger.error(f"  ❌ Failed: {source_dict.get('error')}")
+    
+    # Step 4.5: Get code snippet from specific file and line range
+    logger.info("\n📄 Step 4.5: Getting code snippet from file...")
+    if source_dict.get("success") and source_dict.get("methods"):
+        m = source_dict["methods"][0]
+        filename = m["filename"]
+        start_line = m["lineNumber"]
+        end_line = start_line + 10  # Get 10 lines starting from method
+        
+        snippet_result = await client.call_tool("get_code_snippet", {
+            "session_id": session_id,
+            "filename": filename,
+            "start_line": start_line,
+            "end_line": end_line
+        })
+        snippet_dict = extract_tool_result(snippet_result)
+        
+        if snippet_dict.get("success"):
+            snippet = snippet_dict.get("snippet", "")
+            logger.info(f"  ✅ Retrieved code snippet from {filename} (lines {start_line}-{end_line}):")
+            for i, line in enumerate(snippet.split('\n'), start=start_line):
+                logger.info(f"    {i:3d}: {line}")
+        else:
+            logger.error(f"  ❌ Failed: {snippet_dict.get('error')}")
+    else:
+        logger.info("  ℹ️  Skipping code snippet demo (no method found)")
     
     # Step 5: Get method parameters
     logger.info("\n📋 Step 5: Getting parameters for 'main'...")
@@ -381,7 +408,7 @@ async def demonstrate_browsing_tools():
         logger.info("\n📁 Creating CPG session...")
         session_result = await client.call_tool("create_cpg_session", {
             "source_type": "local",
-            "source_path": "playground/codebases/sample",
+            "source_path": os.path.abspath("playground/codebases/core"),
             "language": "c"
         })
         

@@ -8,6 +8,7 @@ This demonstrates how to use all the tools available in the joern-mcp server.
 import asyncio
 import logging
 import sys
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -51,7 +52,7 @@ async def demonstrate_joern_mcp():
         logger.info("\n📁 Creating CPG session...")
         session_result = await client.call_tool("create_cpg_session", {
             "source_type": "local",
-            "source_path": "./../playground/codebases/sample",
+            "source_path": os.path.abspath("playground/codebases/core"),
             "language": "c"
         })
         
@@ -176,6 +177,34 @@ async def demonstrate_joern_mcp():
                     break
                     
                 await asyncio.sleep(5)
+        
+        # 6.5. Get code snippet
+        logger.info("\n📄 Getting code snippet...")
+        snippet_result = await client.call_tool("get_code_snippet", {
+            "session_id": session_id,
+            "filename": "core.c",
+            "start_line": 1,
+            "end_line": 20
+        })
+        
+        snippet_dict = extract_tool_result(snippet_result)
+        
+        if snippet_dict.get("success"):
+            filename = snippet_dict.get("filename")
+            start_line = snippet_dict.get("start_line")
+            end_line = snippet_dict.get("end_line")
+            code = snippet_dict.get("code")
+            
+            logger.info(f"  ✅ Retrieved code snippet from {filename} (lines {start_line}-{end_line})")
+            logger.info("     Code snippet:")
+            # Show first few lines of the code
+            lines = code.split('\n')[:5]  # Show first 5 lines
+            for i, line in enumerate(lines, start=start_line):
+                logger.info(f"       {i}: {line}")
+            if len(code.split('\n')) > 5:
+                logger.info(f"       ... and {len(code.split('\n')) - 5} more lines")
+        else:
+            logger.error(f"  ❌ Failed to get code snippet: {snippet_dict.get('error')}")
         
         # 7. List all sessions
         logger.info("\n📋 Listing sessions...")
