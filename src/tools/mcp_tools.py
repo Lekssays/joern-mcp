@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional, Dict, Any
 
 from ..models import SessionStatus
@@ -508,7 +508,6 @@ def register_tools(mcp, services: dict):
             # Start async query execution
             query_id = await query_executor.execute_query_async(
                 session_id=session_id,
-                cpg_path=session.cpg_path,
                 query=query,
                 timeout=timeout,
                 limit=limit,
@@ -1004,7 +1003,7 @@ def register_tools(mcp, services: dict):
                 if force:
                     should_cleanup = True
                 elif max_age_hours:
-                    age = datetime.utcnow() - session.last_accessed
+                    age = datetime.now(UTC) - session.last_accessed
                     if age.total_seconds() / 3600 > max_age_hours:
                         should_cleanup = True
 

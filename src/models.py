@@ -2,7 +2,7 @@
 Data models for Joern MCP Server
 """
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional, Dict, Any, List
 from enum import Enum
 
@@ -31,8 +31,8 @@ class Session:
     language: str = ""
     status: str = SessionStatus.INITIALIZING.value
     cpg_path: Optional[str] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    last_accessed: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    last_accessed: datetime = field(default_factory=lambda: datetime.now(UTC))
     error_message: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 

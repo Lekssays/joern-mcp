@@ -3,7 +3,7 @@ Session manager for CPG session lifecycle management
 """
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional, List, Dict, Any
 
 from ..models import Session, SessionStatus, SessionConfig
@@ -90,7 +90,7 @@ class SessionManager:
         """Update session fields"""
         try:
             # Update last_accessed
-            updates['last_accessed'] = datetime.utcnow()
+            updates['last_accessed'] = datetime.now(UTC)
             await self.redis.update_session(session_id, updates, self.config.ttl)
             logger.debug(f"Updated session {session_id}")
         except Exception as e:
@@ -146,7 +146,7 @@ class SessionManager:
         """Refresh session TTL"""
         try:
             await self.redis.touch_session(session_id, self.config.ttl)
-            await self.update_session(session_id, last_accessed=datetime.utcnow())
+            await self.update_session(session_id, last_accessed=datetime.now(UTC))
         except Exception as e:
             logger.error(f"Failed to touch session {session_id}: {e}")
 
@@ -207,7 +207,7 @@ class SessionManager:
         """Clean up sessions that have been idle too long"""
         try:
             sessions = await self.list_sessions()
-            now = datetime.utcnow()
+            now = datetime.now(UTC)
             
             for session in sessions:
                 idle_time = (now - session.last_accessed).total_seconds()

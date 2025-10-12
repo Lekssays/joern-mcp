@@ -3,7 +3,7 @@ Tests for session manager
 """
 import pytest
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, UTC, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch, ANY
 from src.services.session_manager import SessionManager
 from src.models import Session, SessionStatus, SessionConfig
@@ -233,7 +233,7 @@ class TestSessionManager:
     async def test_cleanup_idle_sessions(self, session_manager, mock_redis_client):
         """Test cleanup of idle sessions"""
         # Create sessions with different last_accessed times
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         active_session = Session(
             id="active",
             last_accessed=now - timedelta(minutes=25)  # Clearly not idle (25 min < 30 min)
@@ -256,7 +256,7 @@ class TestSessionManager:
     async def test_cleanup_oldest_sessions(self, session_manager, mock_redis_client):
         """Test cleanup of oldest sessions"""
         # Create sessions with different creation times
-        base_time = datetime.utcnow()
+        base_time = datetime.now(UTC)
         sessions = [
             Session(id="oldest", created_at=base_time - timedelta(hours=3)),
             Session(id="middle", created_at=base_time - timedelta(hours=2)),

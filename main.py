@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Joern MCP Server - Main entry point using FastMCP
+joern-mcp Server - Main entry point using FastMCP
 
-This is the main entry point for the Joern MCP Server that provides static code analysis
+This is the main entry point for the joern-mcp Server that provides static code analysis
 capabilities using Joern's Code Property Graph (CPG) technology with interactive shells.
 """
 
@@ -35,7 +35,7 @@ async def lifespan(mcp: FastMCP):
     # Load configuration
     config = load_config("config.yaml")
     setup_logging(config.server.log_level)
-    logger.info("Starting Joern MCP Server")
+    logger.info("Starting joern-mcp Server")
     
     # Ensure required directories exist
     import os
@@ -80,12 +80,12 @@ async def lifespan(mcp: FastMCP):
         await services['query_executor'].initialize()
         
         logger.info("All services initialized")
-        logger.info("Joern MCP Server is ready")
+        logger.info("joern-mcp Server is ready")
         
         yield
         
         # Shutdown
-        logger.info("Shutting down Joern MCP Server")
+        logger.info("Shutting down joern-mcp Server")
         
         # Cleanup query executor sessions
         await services['query_executor'].cleanup()
@@ -96,7 +96,7 @@ async def lifespan(mcp: FastMCP):
         # Close connections
         await redis_client.close()
         
-        logger.info("Joern MCP Server shutdown complete")
+        logger.info("joern-mcp Server shutdown complete")
         
     except Exception as e:
         logger.error(f"Error during server lifecycle: {e}", exc_info=True)
@@ -105,8 +105,7 @@ async def lifespan(mcp: FastMCP):
 
 # Initialize FastMCP server
 mcp = FastMCP(
-    "Joern MCP Server",
-    dependencies=["fastmcp>=2.12.0", "redis", "gitpython", "pyyaml"],
+    "joern-mcp Server",
     lifespan=lifespan
 )
 
@@ -121,7 +120,7 @@ if __name__ == "__main__":
     host = config_data.server.host
     port = config_data.server.port
     
-    logger.info(f"Starting Joern MCP Server with HTTP transport on {host}:{port}")
+    logger.info(f"Starting joern-mcp Server with HTTP transport on {host}:{port}")
     
     # Use HTTP transport (Streamable HTTP) for production deployment
     # This enables network accessibility, multiple concurrent clients,
