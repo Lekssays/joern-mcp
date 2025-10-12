@@ -1313,7 +1313,8 @@ def register_tools(mcp, services: dict):
                         "name": "main",
                         "filename": "main.c",
                         "lineNumber": 10,
-                        "code": "int main() { ... }"
+                        "lineNumberEnd": 20,
+                        "code": "int main() {\n    printf(\"Hello\");\n    return 0;\n}"
                     }
                 ],
                 "total": 1
@@ -1334,14 +1335,14 @@ def register_tools(mcp, services: dict):
 
             await session_manager.touch_session(session_id)
 
-            # Build query
+            # Build query to get method metadata
             query_parts = [f'cpg.method.name("{method_name}")']
 
             if filename:
                 query_parts.append(f'.filename(".*{filename}.*")')
 
             query_parts.append(
-                ".map(m => (m.name, m.filename, m.lineNumber.getOrElse(-1), m.code))"
+                ".map(m => (m.name, m.filename, m.lineNumber.getOrElse(-1), m.lineNumberEnd.getOrElse(-1)))"
             )
             query = "".join(query_parts) + ".toJsonPretty"
 
@@ -1360,16 +1361,73 @@ def register_tools(mcp, services: dict):
                 }
 
             methods = []
+            method_name_result = ""
+            method_filename = ""
+            line_number = -1
+            line_number_end = -1
+            
             for item in result.data:
                 if isinstance(item, dict):
-                    methods.append(
-                        {
-                            "name": item.get("_1", ""),
-                            "filename": item.get("_2", ""),
-                            "lineNumber": item.get("_3", -1),
-                            "code": item.get("_4", ""),
-                        }
+                    method_name_result = item.get("_1", "")
+                    method_filename = item.get("_2", "")
+                    line_number = item.get("_3", -1)
+                    line_number_end = item.get("_4", -1)
+
+            # Get the full source code using file reading logic
+            if method_filename and line_number > 0 and line_number_end > 0:
+                try:
+                    # Get playground path
+                    playground_path = os.path.abspath(
+                        os.path.join(os.path.dirname(__file__), "..", "..", "playground")
                     )
+
+                    # Get source directory from session
+                    if session.source_type == "github":
+                        # For GitHub repos, use the cached directory
+                        cpg_cache_key = get_cpg_cache_key(
+                            session.source_type, session.source_path, session.language
+                        )
+                        source_dir = os.path.join(playground_path, "codebases", cpg_cache_key)
+                    else:
+                        # For local paths, use the session source path directly
+                        source_path = session.source_path
+                        if not os.path.isabs(source_path):
+                            source_path = os.path.abspath(source_path)
+                        source_dir = source_path
+
+                    # Construct full file path
+                    file_path = os.path.join(source_dir, method_filename)
+
+                    # Check if file exists and read it
+                    if os.path.exists(file_path) and os.path.isfile(file_path):
+                        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                            lines = f.readlines()
+
+                        # Validate line numbers
+                        total_lines = len(lines)
+                        if line_number <= total_lines and line_number_end >= line_number:
+                            # Extract the code snippet (lines are 0-indexed in the list)
+                            actual_end_line = min(line_number_end, total_lines)
+                            code_lines = lines[line_number - 1 : actual_end_line]
+                            full_code = "".join(code_lines)
+                        else:
+                            full_code = f"// Invalid line range: {line_number}-{line_number_end}, file has {total_lines} lines"
+                    else:
+                        full_code = f"// Source file not found: {method_filename}"
+                except Exception as e:
+                    full_code = f"// Error reading source file: {str(e)}"
+            else:
+                full_code = "// Unable to determine line range for method"
+
+            methods.append(
+                {
+                    "name": method_name_result,
+                    "filename": method_filename,
+                    "lineNumber": line_number,
+                    "lineNumberEnd": line_number_end,
+                    "code": full_code,
+                }
+            )
 
             return {"success": True, "methods": methods, "total": len(methods)}
 

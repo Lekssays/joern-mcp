@@ -135,3 +135,4 @@ build.log
 .vscode/
 playground/codebases/*
 !playground/codebases/core/
+joern-docs.md
