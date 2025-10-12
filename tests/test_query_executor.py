@@ -176,7 +176,7 @@ class TestQueryExecutor:
     async def test_execute_query_async_success(self, query_executor):
         """Test successful async query execution"""
         with patch.object(query_executor, '_get_container_id', return_value='container-123'), \
-             patch('asyncio.create_task') as mock_create_task:
+             patch.object(query_executor, '_execute_query_background') as mock_background:
 
             query_id = await query_executor.execute_query_async(
                 session_id="test-session",
@@ -196,8 +196,8 @@ class TestQueryExecutor:
             assert status["session_id"] == "test-session"
             assert status["query"] == "cpg.method"
 
-            # Verify create_task was called
-            mock_create_task.assert_called_once()
+            # Verify background task was started
+            mock_background.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_execute_query_async_invalid_query(self, query_executor):

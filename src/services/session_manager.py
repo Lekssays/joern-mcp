@@ -106,7 +106,7 @@ class SessionManager:
         """Update session status"""
         updates = {
             'status': status,
-            'last_accessed': datetime.utcnow()
+            'last_accessed': datetime.now(UTC)
         }
         
         if error_message:

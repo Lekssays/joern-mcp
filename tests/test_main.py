@@ -2,7 +2,7 @@
 Tests for main module
 """
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 import sys
 from pathlib import Path
 
@@ -50,6 +50,7 @@ class TestLifespan:
             mock_redis_client_class.return_value = mock_redis_client
 
             mock_session_manager = AsyncMock()
+            mock_session_manager.set_docker_cleanup_callback = MagicMock()  # Override to be sync
             mock_session_manager_class.return_value = mock_session_manager
 
             mock_git_manager = AsyncMock()
