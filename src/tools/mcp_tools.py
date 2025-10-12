@@ -459,7 +459,7 @@ def register_tools(mcp, services: dict):
 
     @mcp.tool()
     async def run_cpgql_query_async(
-        session_id: str, query: str, timeout: int = 30, limit: Optional[int] = 150
+        session_id: str, query: str, timeout: int = 30, limit: Optional[int] = 150, offset: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Executes a CPGQL query asynchronously and returns a query ID for status tracking.
@@ -473,6 +473,7 @@ def register_tools(mcp, services: dict):
             query: CPGQL query string (automatically converted to JSON output)
             timeout: Maximum execution time in seconds (default: 30)
             limit: Maximum number of results to return (default: 150)
+            offset: Number of results to skip before returning (default: None, meaning start from beginning)
 
         Returns:
             {
@@ -511,6 +512,7 @@ def register_tools(mcp, services: dict):
                 query=query,
                 timeout=timeout,
                 limit=limit,
+                offset=offset,
             )
 
             return {
@@ -693,7 +695,7 @@ def register_tools(mcp, services: dict):
 
     @mcp.tool()
     async def run_cpgql_query(
-        session_id: str, query: str, timeout: int = 30, limit: Optional[int] = 150
+        session_id: str, query: str, timeout: int = 30, limit: Optional[int] = 150, offset: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Executes a CPGQL query synchronously on a loaded CPG.
@@ -707,6 +709,7 @@ def register_tools(mcp, services: dict):
             query: CPGQL query string (automatically converted to JSON output)
             timeout: Maximum execution time in seconds (default: 30)
             limit: Maximum number of results to return (default: 150)
+            offset: Number of results to skip before returning (default: None, meaning start from beginning)
 
         Returns:
             {
@@ -750,6 +753,7 @@ def register_tools(mcp, services: dict):
                 query=query,
                 timeout=timeout,
                 limit=limit,
+                offset=offset,
             )
 
             return {

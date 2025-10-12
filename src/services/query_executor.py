@@ -71,7 +71,8 @@ class QueryExecutor:
         session_id: str,
         query: str,
         timeout: Optional[int] = None,
-        limit: Optional[int] = 150
+        limit: Optional[int] = 150,
+        offset: Optional[int] = None
     ) -> str:
         """Execute a CPGQL query asynchronously and return query UUID"""
         try:
@@ -85,7 +86,7 @@ class QueryExecutor:
             container_cpg_path = "/workspace/cpg.bin"
             
             # Normalize query to ensure JSON output and pipe to file
-            query_normalized = self._normalize_query_for_json(query.strip(), limit)
+            query_normalized = self._normalize_query_for_json(query.strip(), limit, offset)
             output_file = f"/tmp/query_{query_id}.json"
             query_with_pipe = f"{query_normalized} #> \"{output_file}\""
             
@@ -100,7 +101,7 @@ class QueryExecutor:
             }
             
             # Start async execution
-            asyncio.create_task(self._execute_query_background(query_id, session_id, container_cpg_path, query_with_pipe, timeout, limit))
+            asyncio.create_task(self._execute_query_background(query_id, session_id, query_with_pipe, timeout))
             
             logger.info(f"Started async query {query_id} for session {session_id}")
             return query_id
@@ -114,7 +115,7 @@ class QueryExecutor:
         query_id: str,
         session_id: str,
         query_with_pipe: str,
-        timeout: Optional[int],
+        timeout: Optional[int]
     ):
         """Execute query in background"""
         try:
@@ -223,7 +224,8 @@ class QueryExecutor:
         cpg_path: str,
         query: str,
         timeout: Optional[int] = None,
-        limit: Optional[int] = 150
+        limit: Optional[int] = 150,
+        offset: Optional[int] = None
     ) -> QueryResult:
         """Execute a CPGQL query synchronously (for backwards compatibility)"""
         start_time = time.time()
@@ -233,7 +235,7 @@ class QueryExecutor:
             validate_cpgql_query(query)
             
             # Normalize query to ensure JSON output
-            query_normalized = self._normalize_query_for_json(query.strip(), limit)
+            query_normalized = self._normalize_query_for_json(query.strip(), limit, offset)
             
             # Check cache if enabled
             if self.config.cache_enabled and self.redis:
@@ -339,8 +341,10 @@ class QueryExecutor:
         if to_cleanup:
             logger.info(f"Cleaned up {len(to_cleanup)} old queries")
 
-    def _normalize_query_for_json(self, query: str, limit: Optional[int] = None) -> str:
+    def _normalize_query_for_json(self, query: str, limit: Optional[int] = None, offset: Optional[int] = None) -> str:
         """Normalize query to ensure JSON output"""
+        import re
+        
         # Remove any existing output modifiers
         query = query.strip()
         if query.endswith('.l'):
@@ -351,6 +355,14 @@ class QueryExecutor:
             query = query[:-7]
         elif query.endswith('.toJsonPretty'):
             query = query[:-13]
+        
+        # Remove existing .take() and .drop() modifiers using regex
+        query = re.sub(r'\.take\(\d+\)', '', query)
+        query = re.sub(r'\.drop\(\d+\)', '', query)
+        
+        # Add offset if specified
+        if offset is not None and offset > 0:
+            query = f"{query}.drop({offset})"
         
         # Add limit if specified
         if limit is not None and limit > 0:
