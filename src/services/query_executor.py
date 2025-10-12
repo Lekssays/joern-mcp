@@ -123,14 +123,40 @@ class QueryExecutor:
             self.query_status[query_id]["status"] = QueryStatus.RUNNING.value
             self.query_status[query_id]["started_at"] = time.time()
             
+            # Extract the normalized query (remove the pipe part)
+            query_normalized = query_with_pipe.split(' #>')[0]
+            
+            # Check cache if enabled
+            if self.config.cache_enabled and self.redis:
+                query_hash_val = hash_query(query_normalized)
+                cached = await self.redis.get_cached_query(session_id, query_hash_val)
+                if cached:
+                    logger.info(f"Query cache hit for session {session_id}")
+                    # Update status to completed with cached result
+                    self.query_status[query_id]["status"] = QueryStatus.COMPLETED.value
+                    self.query_status[query_id]["completed_at"] = time.time()
+                    self.query_status[query_id]["result"] = cached
+                    return
+            
             # Execute query using the same approach as sync queries
-            result = await self._execute_query_in_shell(session_id, query_with_pipe.split(' #>')[0], timeout or self.config.timeout)
+            result = await self._execute_query_in_shell(session_id, query_normalized, timeout or self.config.timeout)
             
             if result.success:
                 # Update status to completed
                 self.query_status[query_id]["status"] = QueryStatus.COMPLETED.value
                 self.query_status[query_id]["completed_at"] = time.time()
                 self.query_status[query_id]["result"] = result.to_dict()
+                
+                # Cache result if enabled
+                if self.config.cache_enabled and self.redis:
+                    query_hash_val = hash_query(query_normalized)
+                    await self.redis.cache_query_result(
+                        session_id,
+                        query_hash_val,
+                        result.to_dict(),
+                        self.config.cache_ttl
+                    )
+                
                 logger.info(f"Query {query_id} completed successfully")
             else:
                 # Update status to failed

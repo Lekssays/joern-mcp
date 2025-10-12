@@ -622,3 +622,97 @@ class TestQueryExecutor:
 
             # Should handle gracefully
             assert isinstance(result, QueryResult)
+
+    @pytest.mark.asyncio
+    async def test_execute_query_async_cache_hit(self, query_executor, mock_redis_client):
+        """Test async query execution with cache hit"""
+        # Setup mock to return cached result
+        cached_result = {
+            "success": True,
+            "data": [{"name": "cached_method"}],
+            "row_count": 1,
+            "execution_time": 0.1
+        }
+        mock_redis_client.get_cached_query = AsyncMock(return_value=cached_result)
+        mock_redis_client.cache_query_result = AsyncMock()
+
+        with patch.object(query_executor, '_get_container_id', return_value='container-123'), \
+             patch.object(query_executor, '_execute_query_in_shell') as mock_execute:
+
+            # Start async query
+            query_id = await query_executor.execute_query_async(
+                session_id="test-session",
+                query="cpg.method",
+                timeout=30
+            )
+
+            # Manually run the background task (since create_task is mocked in other tests)
+            # Get the query status to find the normalized query
+            status = query_executor.query_status[query_id]
+            query_normalized = query_executor._normalize_query_for_json("cpg.method")
+            query_with_pipe = f"{query_normalized} #> \"/tmp/query_{query_id}.json\""
+
+            # Execute background task directly
+            await query_executor._execute_query_background(query_id, "test-session", query_with_pipe, 30)
+
+            # Verify query completed with cached result
+            status = await query_executor.get_query_status(query_id)
+            assert status["status"] == QueryStatus.COMPLETED.value
+
+            result = await query_executor.get_query_result(query_id)
+            assert result.success is True
+            assert result.data == [{"name": "cached_method"}]
+            assert result.row_count == 1
+
+            # Verify that actual query execution was NOT called
+            mock_execute.assert_not_called()
+
+            # Verify cache was checked
+            mock_redis_client.get_cached_query.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_execute_query_async_cache_miss_and_store(self, query_executor, mock_redis_client):
+        """Test async query execution with cache miss and result storage"""
+        # Setup mock to return no cached result initially
+        mock_redis_client.get_cached_query = AsyncMock(return_value=None)
+        mock_redis_client.cache_query_result = AsyncMock()
+
+        with patch.object(query_executor, '_get_container_id', return_value='container-123'), \
+             patch.object(query_executor, '_execute_query_in_shell') as mock_execute:
+
+            mock_execute.return_value = QueryResult(
+                success=True,
+                data=[{"name": "executed_method"}],
+                row_count=1,
+                execution_time=1.5
+            )
+
+            # Start async query
+            query_id = await query_executor.execute_query_async(
+                session_id="test-session",
+                query="cpg.method",
+                timeout=30
+            )
+
+            # Execute background task directly
+            status = query_executor.query_status[query_id]
+            query_normalized = query_executor._normalize_query_for_json("cpg.method")
+            query_with_pipe = f"{query_normalized} #> \"/tmp/query_{query_id}.json\""
+
+            await query_executor._execute_query_background(query_id, "test-session", query_with_pipe, 30)
+
+            # Verify query completed
+            status = await query_executor.get_query_status(query_id)
+            assert status["status"] == QueryStatus.COMPLETED.value
+
+            result = await query_executor.get_query_result(query_id)
+            assert result.success is True
+            assert result.data == [{"name": "executed_method"}]
+            assert result.row_count == 1
+
+            # Verify that actual query execution was called
+            mock_execute.assert_called_once()
+
+            # Verify cache was checked and result was stored
+            mock_redis_client.get_cached_query.assert_called_once()
+            mock_redis_client.cache_query_result.assert_called_once()
