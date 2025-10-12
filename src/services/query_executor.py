@@ -498,8 +498,11 @@ echo '{query_with_pipe}' | timeout {timeout} joern {cpg_path}
                 file_result = await loop.run_in_executor(None, _read_file)
                 
                 if file_result.exit_code != 0:
-                    logger.warning(f"No output file created, query returned no results")
-                    return QueryResult(success=True, data=[], row_count=0)
+                    logger.error(f"Output file not generated, query failed due to syntax error or not found attribute")
+                    return QueryResult(
+                        success=False,
+                        error="Query failed: syntax error or attribute not found"
+                    )
                 
                 json_content = file_result.output.decode('utf-8', errors='ignore')
                 
