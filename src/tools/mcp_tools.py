@@ -5,6 +5,7 @@ MCP Tool Definitions for Joern MCP Server
 import asyncio
 import logging
 import os
+import re
 import time
 from datetime import datetime, UTC
 from typing import Optional, Dict, Any
@@ -1111,8 +1112,6 @@ def register_tools(mcp, services: dict):
 
             # Apply pattern filter if provided
             if pattern:
-                import re
-
                 file_paths = [p for p in file_paths if re.search(pattern, p)]
 
             # Build the file tree
@@ -1608,24 +1607,34 @@ def register_tools(mcp, services: dict):
             # Build query based on direction
             if direction == "outgoing":
                 # Methods that the target method calls
+                # Filter out operators (<operator>.*) to reduce noise
+                method_escaped = re.escape(method_name)
                 if depth == 1:
-                    query = f'cpg.method.name("{method_name}").call.map(c => (c.method.name, c.name, 1)).toJsonPretty'
+                    query = f'cpg.method.name("{method_escaped}").call.nameNot("<operator>.*").map(c => (c.method.name, c.name, 1))'
                 elif depth == 2:
-                    query = f"""cpg.method.name("{method_name}").call.flatMap(c1 =>
-                        List((c1.method.name, c1.name, 1)) ++
-                        c1.callee.flatMap(m => m.call.map(c2 => (c1.name, c2.name, 2)))
-                    ).toJsonPretty"""
+                    # Simpler depth 2: get direct calls, then calls from those methods
+                    query = (
+                        f'val method = cpg.method.name("{method_escaped}").l\n'
+                        f'val depth1 = method.flatMap(_.call.nameNot("<operator>.*")).l\n'
+                        f'val depth1Results = depth1.map(c => (c.method.name, c.name, 1)).l\n'
+                        f'val depth2Results = depth1.flatMap(c => c.callee.flatMap(_.call.nameNot("<operator>.*")).map(c2 => (c.name, c2.name, 2))).l\n'
+                        f'(depth1Results ++ depth2Results).toJsonPretty'
+                    )
                 else:  # depth == 3
-                    query = f"""cpg.method.name("{method_name}").call.flatMap(c1 =>
-                        List((c1.method.name, c1.name, 1)) ++
-                        c1.callee.flatMap(m1 => m1.call.flatMap(c2 =>
-                            List((c1.name, c2.name, 2)) ++
-                            c2.callee.flatMap(m2 => m2.call.map(c3 => (c2.name, c3.name, 3)))
-                        ))
-                    ).toJsonPretty"""
+                    query = (
+                        f'val method = cpg.method.name("{method_escaped}").l\n'
+                        f'val depth1 = method.flatMap(_.call.nameNot("<operator>.*")).l\n'
+                        f'val depth1Results = depth1.map(c => (c.method.name, c.name, 1)).l\n'
+                        f'val depth2 = depth1.flatMap(c => c.callee.flatMap(_.call.nameNot("<operator>.*"))).l\n'
+                        f'val depth2Results = depth2.map(c => (c.method.name, c.name, 2)).l\n'
+                        f'val depth3Results = depth2.flatMap(c => c.callee.flatMap(_.call.nameNot("<operator>.*")).map(c2 => (c.name, c2.name, 3))).l\n'
+                        f'(depth1Results ++ depth2Results ++ depth3Results).toJsonPretty'
+                    )
             else:  # incoming
                 # Methods that call the target method
-                query = f'cpg.method.name("{method_name}").caller.map(m => ("CALLER", m.name, 1)).toJsonPretty'
+                # Return (caller_name, target_name, depth)
+                method_escaped = re.escape(method_name)
+                query = f'cpg.method.name("{method_escaped}").caller.map(m => (m.name, "{method_escaped}", 1))'
 
             result = await query_executor.execute_query(
                 session_id=session_id,
@@ -1872,6 +1881,325 @@ def register_tools(mcp, services: dict):
             }
 
     @mcp.tool()
+    async def find_taint_sources(
+        session_id: str, language: Optional[str] = None, source_patterns: Optional[list] = None, limit: int = 200
+    ) -> Dict[str, Any]:
+        """
+        Locate likely external input points (taint sources).
+
+        Search for function calls that could be entry points for untrusted data,
+        such as user input, environment variables, or network data. Useful for
+        identifying where external data enters the program.
+
+        Args:
+            session_id: The session ID from create_cpg_session
+            language: Programming language to use for default patterns (e.g., "c", "java")
+                If not provided, uses the session's language
+            source_patterns: Optional list of regex patterns to match source function names
+                (e.g., ["getenv", "fgets", "scanf"]). If not provided, uses default patterns
+            limit: Maximum number of results to return (default: 200)
+
+        Returns:
+            {
+                "success": true,
+                "sources": [
+                    {
+                        "node_id": "12345",
+                        "name": "getenv",
+                        "code": "getenv(\"PATH\")",
+                        "filename": "main.c",
+                        "lineNumber": 42,
+                        "method": "main"
+                    }
+                ],
+                "total": 1
+            }
+        """
+        try:
+            validate_session_id(session_id)
+
+            session_manager = services["session_manager"]
+            query_executor = services["query_executor"]
+
+            session = await session_manager.get_session(session_id)
+            if not session:
+                raise SessionNotFoundError(f"Session {session_id} not found")
+
+            if session.status != SessionStatus.READY.value:
+                raise SessionNotReadyError(f"Session is in '{session.status}' status")
+
+            await session_manager.touch_session(session_id)
+
+            # Determine language and patterns
+            lang = language or session.language or "c"
+            cfg = services["config"]
+            taint_cfg = getattr(cfg.cpg, "taint_sources", {}) if hasattr(cfg.cpg, "taint_sources") else {}
+
+            patterns = source_patterns or taint_cfg.get(lang, [])
+            if not patterns:
+                # Fallback to common C patterns
+                patterns = ["getenv", "fgets", "scanf", "read", "recv", "accept", "fopen"]
+
+            # Build Joern query searching for call names matching any pattern
+            # Remove trailing parens from patterns for proper regex matching
+            cleaned_patterns = [p.rstrip("(") for p in patterns]
+            joined = "|".join([re.escape(p) for p in cleaned_patterns])
+            # Use cpg.call where name matches regex
+            query = f'cpg.call.name("{joined}").map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take({limit})'
+
+            result = await query_executor.execute_query(
+                session_id=session_id,
+                cpg_path="/workspace/cpg.bin",
+                query=query,
+                timeout=30,
+                limit=limit,
+            )
+
+            if not result.success:
+                return {"success": False, "error": {"code": "QUERY_ERROR", "message": result.error}}
+
+            sources = []
+            for item in result.data:
+                if isinstance(item, dict):
+                    sources.append({
+                        "node_id": item.get("_1"),
+                        "name": item.get("_2"),
+                        "code": item.get("_3"),
+                        "filename": item.get("_4"),
+                        "lineNumber": item.get("_5"),
+                        "method": item.get("_6"),
+                    })
+
+            return {"success": True, "sources": sources, "total": len(sources)}
+
+        except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
+            logger.error(f"Error finding taint sources: {e}")
+            return {"success": False, "error": {"code": type(e).__name__.upper(), "message": str(e)}}
+        except Exception as e:
+            logger.error(f"Unexpected error finding taint sources: {e}", exc_info=True)
+            return {"success": False, "error": {"code": "INTERNAL_ERROR", "message": str(e)}}
+
+    @mcp.tool()
+    async def find_taint_sinks(
+        session_id: str, language: Optional[str] = None, sink_patterns: Optional[list] = None, limit: int = 200
+    ) -> Dict[str, Any]:
+        """
+        Locate dangerous sinks where tainted data could cause vulnerabilities.
+
+        Search for function calls that could be security-sensitive destinations
+        for data, such as system execution, file operations, or format strings.
+        Useful for identifying where untrusted data could cause harm.
+
+        Args:
+            session_id: The session ID from create_cpg_session
+            language: Programming language to use for default patterns (e.g., "c", "java")
+                If not provided, uses the session's language
+            sink_patterns: Optional list of regex patterns to match sink function names
+                (e.g., ["system", "popen", "sprintf"]). If not provided, uses default patterns
+            limit: Maximum number of results to return (default: 200)
+
+        Returns:
+            {
+                "success": true,
+                "sinks": [
+                    {
+                        "node_id": "67890",
+                        "name": "system",
+                        "code": "system(cmd)",
+                        "filename": "main.c",
+                        "lineNumber": 100,
+                        "method": "execute_command"
+                    }
+                ],
+                "total": 1
+            }
+        """
+        try:
+            validate_session_id(session_id)
+
+            session_manager = services["session_manager"]
+            query_executor = services["query_executor"]
+
+            session = await session_manager.get_session(session_id)
+            if not session:
+                raise SessionNotFoundError(f"Session {session_id} not found")
+
+            if session.status != SessionStatus.READY.value:
+                raise SessionNotReadyError(f"Session is in '{session.status}' status")
+
+            await session_manager.touch_session(session_id)
+
+            lang = language or session.language or "c"
+            cfg = services["config"]
+            taint_cfg = getattr(cfg.cpg, "taint_sinks", {}) if hasattr(cfg.cpg, "taint_sinks") else {}
+
+            patterns = sink_patterns or taint_cfg.get(lang, [])
+            if not patterns:
+                patterns = ["system", "popen", "execl", "execv", "sprintf", "fprintf"]
+
+            # Remove trailing parens from patterns for proper regex matching
+            cleaned_patterns = [p.rstrip("(") for p in patterns]
+            joined = "|".join([re.escape(p) for p in cleaned_patterns])
+            query = f'cpg.call.name("{joined}").map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take({limit})'
+
+            result = await query_executor.execute_query(
+                session_id=session_id,
+                cpg_path="/workspace/cpg.bin",
+                query=query,
+                timeout=30,
+                limit=limit,
+            )
+
+            if not result.success:
+                return {"success": False, "error": {"code": "QUERY_ERROR", "message": result.error}}
+
+            sinks = []
+            for item in result.data:
+                if isinstance(item, dict):
+                    sinks.append({
+                        "node_id": item.get("_1"),
+                        "name": item.get("_2"),
+                        "code": item.get("_3"),
+                        "filename": item.get("_4"),
+                        "lineNumber": item.get("_5"),
+                        "method": item.get("_6"),
+                    })
+
+            return {"success": True, "sinks": sinks, "total": len(sinks)}
+
+        except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
+            logger.error(f"Error finding taint sinks: {e}")
+            return {"success": False, "error": {"code": type(e).__name__.upper(), "message": str(e)}}
+        except Exception as e:
+            logger.error(f"Unexpected error finding taint sinks: {e}", exc_info=True)
+            return {"success": False, "error": {"code": "INTERNAL_ERROR", "message": str(e)}}
+
+    @mcp.tool()
+    async def find_taint_flows(
+        session_id: str,
+        source_patterns: Optional[list] = None,
+        sink_patterns: Optional[list] = None,
+        max_path_length: int = 10,
+        timeout: int = 30,
+        limit: int = 100,
+    ) -> Dict[str, Any]:
+        """
+        Find dataflow paths from sources to sinks using Joern dataflow primitives.
+
+        Analyze data flow from taint sources (external input points) to taint sinks
+        (security-sensitive operations) to identify potential vulnerabilities. This
+        is a computationally expensive operation that may take significant time.
+
+        Args:
+            session_id: The session ID from create_cpg_session
+            source_patterns: Optional list of regex patterns for source function names
+                If not provided, uses default patterns from config for the session's language
+            sink_patterns: Optional list of regex patterns for sink function names
+                If not provided, uses default patterns from config for the session's language
+            max_path_length: Maximum length of dataflow paths to consider (default: 10)
+                Flows with more than this many elements will be filtered out
+            timeout: Maximum execution time in seconds (default: 30)
+            limit: Maximum number of flow results to return (default: 100)
+
+        Returns:
+            {
+                "success": true,
+                "flows": [
+                    {
+                        "source_code": "getenv(\"PATH\")",
+                        "source_file": "main.c",
+                        "source_line": 42,
+                        "sink_code": "system(cmd)",
+                        "sink_file": "main.c",
+                        "sink_line": 100,
+                        "path_length": 3
+                    }
+                ],
+                "total": 1
+            }
+        """
+        try:
+            validate_session_id(session_id)
+
+            session_manager = services["session_manager"]
+            query_executor = services["query_executor"]
+
+            session = await session_manager.get_session(session_id)
+            if not session:
+                raise SessionNotFoundError(f"Session {session_id} not found")
+
+            if session.status != SessionStatus.READY.value:
+                raise SessionNotReadyError(f"Session is in '{session.status}' status")
+
+            await session_manager.touch_session(session_id)
+
+            lang = session.language or "c"
+            cfg = services["config"]
+            taint_src_cfg = getattr(cfg.cpg, "taint_sources", {}) if hasattr(cfg.cpg, "taint_sources") else {}
+            taint_sink_cfg = getattr(cfg.cpg, "taint_sinks", {}) if hasattr(cfg.cpg, "taint_sinks") else {}
+
+            srcs = source_patterns or taint_src_cfg.get(lang, [])
+            snks = sink_patterns or taint_sink_cfg.get(lang, [])
+
+            if not srcs or not snks:
+                # If either is empty, return empty result quickly
+                return {"success": True, "flows": [], "total": 0}
+
+            # Remove trailing parens from patterns for proper regex matching
+            cleaned_srcs = [p.rstrip("(") for p in srcs]
+            cleaned_snks = [p.rstrip("(") for p in snks]
+            src_joined = "|".join([re.escape(p) for p in cleaned_srcs])
+            snk_joined = "|".join([re.escape(p) for p in cleaned_snks])
+
+            # Build a query that finds dataflow paths from sources to sinks
+            # Use Joern's sink.reachableByFlows(source) to find actual dataflow paths
+            # Note: The query must .l (list) the sources and sinks before passing to reachableByFlows
+            # Filter by max_path_length to avoid excessively long paths
+            query = (
+                f'val sources = cpg.call.name("{src_joined}").l\n'
+                f'val sinks = cpg.call.name("{snk_joined}").l\n'
+                f'sinks.reachableByFlows(sources).filter(flow => flow.elements.size <= {max_path_length}).map(flow => {{\n'
+                f'  val elems = flow.elements\n'
+                f'  (elems.head.code, elems.head.file.name.headOption.getOrElse("unknown"), elems.head.lineNumber.getOrElse(-1), '
+                f'elems.last.code, elems.last.file.name.headOption.getOrElse("unknown"), elems.last.lineNumber.getOrElse(-1), '
+                f'elems.size)\n'
+                f'}}).take({limit})'
+            )
+
+            result = await query_executor.execute_query(
+                session_id=session_id,
+                cpg_path="/workspace/cpg.bin",
+                query=query,
+                timeout=timeout,
+                limit=limit,
+            )
+
+            if not result.success:
+                return {"success": False, "error": {"code": "QUERY_ERROR", "message": result.error}}
+
+            flows = []
+            for item in result.data:
+                if isinstance(item, dict):
+                    flows.append({
+                        "source_code": item.get("_1"),
+                        "source_file": item.get("_2"),
+                        "source_line": item.get("_3"),
+                        "sink_code": item.get("_4"),
+                        "sink_file": item.get("_5"),
+                        "sink_line": item.get("_6"),
+                        "path_length": item.get("_7"),
+                    })
+
+            return {"success": True, "flows": flows, "total": len(flows)}
+
+        except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
+            logger.error(f"Error finding taint flows: {e}")
+            return {"success": False, "error": {"code": type(e).__name__.upper(), "message": str(e)}}
+        except Exception as e:
+            logger.error(f"Unexpected error finding taint flows: {e}", exc_info=True)
+            return {"success": False, "error": {"code": "INTERNAL_ERROR", "message": str(e)}}
+
+    @mcp.tool()
     async def check_method_reachability(
         session_id: str, source_method: str, target_method: str
     ) -> Dict[str, Any]:
@@ -1911,14 +2239,48 @@ def register_tools(mcp, services: dict):
 
             await session_manager.touch_session(session_id)
 
-            # Query to check reachability
-            query = f'cpg.method.name("{source_method}").reachableBy(cpg.method.name("{target_method}")).size > 0'
+            # Escape patterns for regex
+            source_escaped = re.escape(source_method)
+            target_escaped = re.escape(target_method)
+
+            # Query to check reachability: can source reach target through call graph?
+            # We traverse the call graph iteratively for up to 5 levels deep
+            # Level 1: direct calls from source
+            # Level 2+: calls from those callees recursively
+            query = (
+                f'val source = cpg.method.name("{source_escaped}").l\n'
+                f'val target = cpg.method.name("{target_escaped}").l\n'
+                f'val reachable = if (source.nonEmpty && target.nonEmpty) {{\n'
+                f'  val level1 = source.head.call.callee.l\n'
+                f'  val foundAtLevel1 = level1.exists(_.name == "{target_escaped}")\n'
+                f'  if (foundAtLevel1) true else {{\n'
+                f'    val level2 = level1.flatMap(_.call.callee).name.dedup.l\n'
+                f'    val foundAtLevel2 = level2.contains("{target_escaped}")\n'
+                f'    if (foundAtLevel2) true else {{\n'
+                f'      val level3Methods = level1.flatMap(_.call.callee).l\n'
+                f'      val level3 = level3Methods.flatMap(_.call.callee).name.dedup.l\n'
+                f'      val foundAtLevel3 = level3.contains("{target_escaped}")\n'
+                f'      if (foundAtLevel3) true else {{\n'
+                f'        val level4Methods = level3Methods.flatMap(_.call.callee).l\n'
+                f'        val level4 = level4Methods.flatMap(_.call.callee).name.dedup.l\n'
+                f'        val foundAtLevel4 = level4.contains("{target_escaped}")\n'
+                f'        if (foundAtLevel4) true else {{\n'
+                f'          val level5Methods = level4Methods.flatMap(_.call.callee).l\n'
+                f'          val level5 = level5Methods.flatMap(_.call.callee).name.dedup.l\n'
+                f'          level5.contains("{target_escaped}")\n'
+                f'        }}\n'
+                f'      }}\n'
+                f'    }}\n'
+                f'  }}\n'
+                f'}} else false\n'
+                f'List(reachable).toJsonPretty'
+            )
 
             result = await query_executor.execute_query(
                 session_id=session_id,
                 cpg_path="/workspace/cpg.bin",
                 query=query,
-                timeout=30,
+                timeout=60,
                 limit=1,
             )
 
@@ -1952,6 +2314,490 @@ def register_tools(mcp, services: dict):
             }
         except Exception as e:
             logger.error(f"Unexpected error: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": {"code": "INTERNAL_ERROR", "message": str(e)},
+            }
+
+    @mcp.tool()
+    async def list_taint_paths(
+        session_id: str,
+        source_pattern: Optional[str] = None,
+        sink_pattern: Optional[str] = None,
+        source_node_id: Optional[str] = None,
+        sink_node_id: Optional[str] = None,
+        max_paths: int = 10,
+        max_path_length: int = 15,
+        timeout: int = 60,
+    ) -> Dict[str, Any]:
+        """
+        List detailed taint flow paths from sources to sinks.
+
+        For given source and sink patterns (or specific node IDs), returns full
+        dataflow paths as ordered node sequences showing how data flows from
+        sources to sinks. Each path includes code, file, line number, and node
+        type for every step in the flow.
+
+        This is useful for:
+        - Detailed triage of taint vulnerabilities
+        - Understanding complete propagation chains
+        - Visualizing call/assignment/propagation sequences
+        - Security code review and validation
+
+        Args:
+            session_id: The session ID from create_cpg_session
+            source_pattern: Regex pattern for source function names (e.g., "getenv|input|request")
+                Either source_pattern or source_node_id must be provided
+            sink_pattern: Regex pattern for sink function names (e.g., "system|exec|eval")
+                Either sink_pattern or sink_node_id must be provided
+            source_node_id: Specific node ID to use as source (alternative to pattern)
+            sink_node_id: Specific node ID to use as sink (alternative to pattern)
+            max_paths: Maximum number of paths to return (default: 10)
+            max_path_length: Maximum length of each path in nodes (default: 15)
+            timeout: Maximum execution time in seconds (default: 60)
+
+        Returns:
+            {
+                "success": true,
+                "paths": [
+                    {
+                        "path_id": "path-1",
+                        "source": {
+                            "code": "getenv(\"PATH\")",
+                            "filename": "main.c",
+                            "lineNumber": 42,
+                            "method": "main"
+                        },
+                        "sink": {
+                            "code": "system(cmd)",
+                            "filename": "main.c",
+                            "lineNumber": 100,
+                            "method": "execute_command"
+                        },
+                        "path_length": 5,
+                        "nodes": [
+                            {
+                                "step": 0,
+                                "code": "getenv(\"PATH\")",
+                                "filename": "main.c",
+                                "lineNumber": 42,
+                                "node_type": "CALL"
+                            },
+                            {
+                                "step": 1,
+                                "code": "env_path",
+                                "filename": "main.c",
+                                "lineNumber": 42,
+                                "node_type": "IDENTIFIER"
+                            },
+                            ...
+                        ]
+                    }
+                ],
+                "total": 2
+            }
+        """
+        try:
+            validate_session_id(session_id)
+
+            # Validate inputs
+            if not source_pattern and not source_node_id:
+                raise ValidationError("Either source_pattern or source_node_id must be provided")
+            if not sink_pattern and not sink_node_id:
+                raise ValidationError("Either sink_pattern or sink_node_id must be provided")
+
+            session_manager = services["session_manager"]
+            query_executor = services["query_executor"]
+
+            session = await session_manager.get_session(session_id)
+            if not session:
+                raise SessionNotFoundError(f"Session {session_id} not found")
+
+            if session.status != SessionStatus.READY.value:
+                raise SessionNotReadyError(f"Session is in '{session.status}' status")
+
+            await session_manager.touch_session(session_id)
+
+            # Build query based on whether we have patterns or node IDs
+            if source_node_id and sink_node_id:
+                # Use specific node IDs
+                query = (
+                    f'val sources = cpg.id("{source_node_id}").l\n'
+                    f'val sinks = cpg.id("{sink_node_id}").l\n'
+                    f'val flows = if (sources.nonEmpty && sinks.nonEmpty) {{\n'
+                    f'  sinks.reachableByFlows(sources)\n'
+                    f'    .filter(flow => flow.elements.size <= {max_path_length})\n'
+                    f'    .take({max_paths})\n'
+                    f'    .map(flow => {{\n'
+                    f'      val elems = flow.elements\n'
+                    f'      (elems.head.code, elems.head.file.name.headOption.getOrElse("unknown"), '
+                    f'elems.head.lineNumber.getOrElse(-1), '
+                    f'elems.last.code, elems.last.file.name.headOption.getOrElse("unknown"), '
+                    f'elems.last.lineNumber.getOrElse(-1), '
+                    f'elems.size, '
+                    f'elems.map(e => (e.code, e.file.name.headOption.getOrElse("unknown"), '
+                    f'e.lineNumber.getOrElse(-1), e.label)))\n'
+                    f'    }})\n'
+                    f'    .l\n'
+                    f'}} else List()\n'
+                    f'flows.toJsonPretty'
+                )
+            else:
+                # Use patterns
+                src_pattern = source_pattern or ".*"
+                snk_pattern = sink_pattern or ".*"
+                
+                # Clean and escape patterns
+                cleaned_src = src_pattern.rstrip("(")
+                cleaned_snk = snk_pattern.rstrip("(")
+                escaped_src = re.escape(cleaned_src) if cleaned_src != ".*" else cleaned_src
+                escaped_snk = re.escape(cleaned_snk) if cleaned_snk != ".*" else cleaned_snk
+
+                query = (
+                    f'val sources = cpg.call.name("{escaped_src}").l\n'
+                    f'val sinks = cpg.call.name("{escaped_snk}").l\n'
+                    f'val flows = if (sources.nonEmpty && sinks.nonEmpty) {{\n'
+                    f'  sinks.reachableByFlows(sources)\n'
+                    f'    .filter(flow => flow.elements.size <= {max_path_length})\n'
+                    f'    .take({max_paths})\n'
+                    f'    .map(flow => {{\n'
+                    f'      val elems = flow.elements\n'
+                    f'      (elems.head.code, elems.head.file.name.headOption.getOrElse("unknown"), '
+                    f'elems.head.lineNumber.getOrElse(-1), '
+                    f'elems.last.code, elems.last.file.name.headOption.getOrElse("unknown"), '
+                    f'elems.last.lineNumber.getOrElse(-1), '
+                    f'elems.size, '
+                    f'elems.map(e => (e.code, e.file.name.headOption.getOrElse("unknown"), '
+                    f'e.lineNumber.getOrElse(-1), e.label)))\n'
+                    f'    }})\n'
+                    f'    .l\n'
+                    f'}} else List()\n'
+                    f'flows.toJsonPretty'
+                )
+
+            result = await query_executor.execute_query(
+                session_id=session_id,
+                cpg_path="/workspace/cpg.bin",
+                query=query,
+                timeout=timeout,
+                limit=max_paths * 20,  # Allow for node expansion
+            )
+
+            if not result.success:
+                return {
+                    "success": False,
+                    "error": {"code": "QUERY_ERROR", "message": result.error},
+                }
+
+            paths = []
+            for idx, item in enumerate(result.data):
+                if isinstance(item, dict):
+                    # Extract path information (without method names)
+                    source_info = {
+                        "code": item.get("_1", ""),
+                        "filename": item.get("_2", ""),
+                        "lineNumber": item.get("_3", -1),
+                    }
+                    
+                    sink_info = {
+                        "code": item.get("_4", ""),
+                        "filename": item.get("_5", ""),
+                        "lineNumber": item.get("_6", -1),
+                    }
+                    
+                    path_length = item.get("_7", 0)
+                    
+                    # Extract node sequence
+                    nodes = []
+                    node_list = item.get("_8", [])
+                    for step, node_data in enumerate(node_list):
+                        if isinstance(node_data, dict):
+                            nodes.append({
+                                "step": step,
+                                "code": node_data.get("_1", ""),
+                                "filename": node_data.get("_2", ""),
+                                "lineNumber": node_data.get("_3", -1),
+                                "node_type": node_data.get("_4", "UNKNOWN"),
+                            })
+                    
+                    paths.append({
+                        "path_id": f"path-{idx + 1}",
+                        "source": source_info,
+                        "sink": sink_info,
+                        "path_length": path_length,
+                        "nodes": nodes,
+                    })
+
+            return {
+                "success": True,
+                "paths": paths,
+                "total": len(paths),
+            }
+
+        except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
+            logger.error(f"Error listing taint paths: {e}")
+            return {
+                "success": False,
+                "error": {"code": type(e).__name__.upper(), "message": str(e)},
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error listing taint paths: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": {"code": "INTERNAL_ERROR", "message": str(e)},
+            }
+
+    @mcp.tool()
+    async def get_program_slice(
+        session_id: str,
+        filename: str,
+        line_number: int,
+        call_name: Optional[str] = None,
+        include_dataflow: bool = True,
+        include_control_flow: bool = True,
+        max_depth: int = 5,
+        timeout: int = 60,
+    ) -> Dict[str, Any]:
+        """
+        Build a program slice from a specific line or call.
+
+        Creates a backward program slice showing all code that could affect the
+        execution at a specific point. This includes:
+        - The call itself and its arguments
+        - Dataflow: all assignments and operations affecting argument variables
+        - Control flow: conditions that determine whether the call executes
+        - Call graph: functions called and their data dependencies
+
+        Args:
+            session_id: The session ID from create_cpg_session
+            filename: Source file containing the line of interest
+            line_number: Line number of the call/statement to slice from
+            call_name: Optional: specific call name to slice (e.g., "memcpy", "strcpy")
+                If not provided, slices all calls on that line
+            include_dataflow: Include dataflow (variable assignments) in slice (default: true)
+            include_control_flow: Include control dependencies (if/while conditions) (default: true)
+            max_depth: Maximum depth for dataflow tracking (default: 5)
+            timeout: Maximum execution time in seconds (default: 60)
+
+        Returns:
+            {
+                "success": true,
+                "slice": {
+                    "target_call": {
+                        "name": "memcpy",
+                        "code": "memcpy(buf, src, size)",
+                        "filename": "main.c",
+                        "lineNumber": 42,
+                        "arguments": ["buf", "src", "size"]
+                    },
+                    "dataflow": [
+                        {
+                            "variable": "buf",
+                            "definition": "char buf[256]",
+                            "filename": "main.c",
+                            "lineNumber": 10,
+                            "dependencies": [...]
+                        }
+                    ],
+                    "control_dependencies": [
+                        {
+                            "condition": "if (user_input != NULL)",
+                            "filename": "main.c",
+                            "lineNumber": 35
+                        }
+                    ],
+                    "call_graph": [
+                        {"from": "main", "to": "memcpy", "depth": 1},
+                        {"from": "memcpy", "to": "__memcpy", "depth": 2}
+                    ]
+                },
+                "total_nodes": 15
+            }
+        """
+        try:
+            validate_session_id(session_id)
+
+            session_manager = services["session_manager"]
+            query_executor = services["query_executor"]
+
+            session = await session_manager.get_session(session_id)
+            if not session:
+                raise SessionNotFoundError(f"Session {session_id} not found")
+
+            if session.status != SessionStatus.READY.value:
+                raise SessionNotReadyError(f"Session is in '{session.status}' status")
+
+            await session_manager.touch_session(session_id)
+
+            # Step 1: Find the target call(s) at the specified location
+            call_filter = f'.name("{call_name}")' if call_name else ""
+            target_query = (
+                f'cpg.call{call_filter}'
+                f'.where(_.file.name(".*{re.escape(filename)}.*"))'
+                f'.lineNumber({line_number})'
+                f'.map(c => (c.name, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), '
+                f'c.argument.l.map(_.code), c.method.name))'
+            )
+
+            target_result = await query_executor.execute_query(
+                session_id=session_id,
+                cpg_path="/workspace/cpg.bin",
+                query=target_query,
+                timeout=30,
+                limit=10,
+            )
+
+            if not target_result.success or not target_result.data:
+                return {
+                    "success": False,
+                    "error": {
+                        "code": "NOT_FOUND",
+                        "message": f"No call found at {filename}:{line_number}"
+                    },
+                }
+
+            # Parse target call information
+            target_item = target_result.data[0]
+            if not isinstance(target_item, dict):
+                return {
+                    "success": False,
+                    "error": {"code": "PARSE_ERROR", "message": "Invalid target call data"},
+                }
+
+            target_call = {
+                "name": target_item.get("_1", ""),
+                "code": target_item.get("_2", ""),
+                "filename": target_item.get("_3", ""),
+                "lineNumber": target_item.get("_4", -1),
+                "arguments": target_item.get("_5", []),
+                "method": target_item.get("_6", ""),
+            }
+
+            slice_result = {
+                "target_call": target_call,
+                "dataflow": [],
+                "control_dependencies": [],
+                "call_graph": [],
+            }
+
+            # Step 2: Get dataflow for arguments
+            if include_dataflow and target_call["arguments"]:
+                # Build query to track dataflow for each argument using reachableByFlows
+                for arg in target_call["arguments"]:
+                    # Clean up argument (remove operators, casts, etc)
+                    clean_arg = arg.strip()
+                    if not clean_arg or clean_arg.isdigit() or clean_arg.startswith('"'):
+                        continue  # Skip literals
+
+                    # Query for dataflow using reachableByFlows from identifiers to the call argument
+                    dataflow_query = (
+                        f'val sources = cpg.identifier.name("{re.escape(clean_arg)}").l\n'
+                        f'val sink = cpg.call.where(_.file.name(".*{re.escape(filename)}.*"))'
+                        f'.lineNumber({line_number})'
+                        f'.argument.code(".*{re.escape(clean_arg)}.*").l\n'
+                        f'if (sources.nonEmpty && sink.nonEmpty) {{\n'
+                        f'  sink.reachableByFlows(sources).map(flow => {{\n'
+                        f'    val elems = flow.elements\n'
+                        f'    elems.take(15).map(e => (e.code, e.file.name.headOption.getOrElse("unknown"), '
+                        f'e.lineNumber.getOrElse(-1), e.method.name))\n'
+                        f'  }}).take({max_depth}).l.flatten\n'
+                        f'}} else List()'
+                    )
+
+                    dataflow_result = await query_executor.execute_query(
+                        session_id=session_id,
+                        cpg_path="/workspace/cpg.bin",
+                        query=dataflow_query,
+                        timeout=20,
+                        limit=50,
+                    )
+
+                    if dataflow_result.success and dataflow_result.data:
+                        for item in dataflow_result.data:
+                            if isinstance(item, dict):
+                                slice_result["dataflow"].append({
+                                    "variable": clean_arg,
+                                    "definition": item.get("_1", ""),
+                                    "filename": item.get("_2", ""),
+                                    "lineNumber": item.get("_3", -1),
+                                    "method": item.get("_4", ""),
+                                })
+
+            # Step 3: Get control dependencies
+            if include_control_flow:
+                # Query for control dependencies using controlledBy
+                control_query = (
+                    f'cpg.call.where(_.file.name(".*{re.escape(filename)}.*"))'
+                    f'.lineNumber({line_number})'
+                    f'.controlledBy'
+                    f'.map(n => (n.code, n.file.name.headOption.getOrElse("unknown"), n.lineNumber.getOrElse(-1)))'
+                    f'.dedup.take(20)'
+                )
+
+                control_result = await query_executor.execute_query(
+                    session_id=session_id,
+                    cpg_path="/workspace/cpg.bin",
+                    query=control_query,
+                    timeout=20,
+                    limit=20,
+                )
+
+                if control_result.success and control_result.data:
+                    for item in control_result.data:
+                        if isinstance(item, dict):
+                            slice_result["control_dependencies"].append({
+                                "condition": item.get("_1", ""),
+                                "filename": item.get("_2", ""),
+                                "lineNumber": item.get("_3", -1),
+                            })
+
+            # Step 4: Get call graph (outgoing calls from the target call's method)
+            if target_call["method"]:
+                callgraph_query = (
+                    f'cpg.method.name("{target_call["method"]}")'
+                    f'.call.nameNot("<operator>.*")'
+                    f'.map(c => ("{target_call["method"]}", c.name, 1))'
+                    f'.dedup.take(30)'
+                )
+
+                callgraph_result = await query_executor.execute_query(
+                    session_id=session_id,
+                    cpg_path="/workspace/cpg.bin",
+                    query=callgraph_query,
+                    timeout=20,
+                    limit=30,
+                )
+
+                if callgraph_result.success and callgraph_result.data:
+                    for item in callgraph_result.data:
+                        if isinstance(item, dict):
+                            slice_result["call_graph"].append({
+                                "from": item.get("_1", ""),
+                                "to": item.get("_2", ""),
+                                "depth": item.get("_3", 1),
+                            })
+
+            total_nodes = (
+                1 +  # target call
+                len(slice_result["dataflow"]) +
+                len(slice_result["control_dependencies"]) +
+                len(slice_result["call_graph"])
+            )
+
+            return {
+                "success": True,
+                "slice": slice_result,
+                "total_nodes": total_nodes,
+            }
+
+        except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
+            logger.error(f"Error getting program slice: {e}")
+            return {
+                "success": False,
+                "error": {"code": type(e).__name__.upper(), "message": str(e)},
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error getting program slice: {e}", exc_info=True)
             return {
                 "success": False,
                 "error": {"code": "INTERNAL_ERROR", "message": str(e)},

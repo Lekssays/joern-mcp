@@ -188,6 +188,36 @@ cpg:
     - csharp
     - php
     - ruby
+  taint_sources:
+    c:
+      - getenv
+      - fgets
+      - scanf
+      - read
+      - recv
+      - accept
+      - fopen
+    cpp:
+      - std::cin
+      - getline
+      - recv
+      - accept
+      - fopen
+  taint_sinks:
+    c:
+      - system
+      - popen
+      - execl
+      - execv
+      - sprintf
+      - fprintf
+    cpp:
+      - system
+      - popen
+      - std::ofstream
+      - sprintf
+      - snprintf
+
 
 query:
   timeout: ${QUERY_TIMEOUT:30}

@@ -278,6 +278,10 @@ class CPGConfig:
     languages_with_exclusions: List[str] = field(default_factory=lambda: [
         "c", "cpp", "java", "javascript", "python", "go", "kotlin", "csharp", "php", "ruby"
     ])
+    # Pre-defined taint source/sink patterns per language. Keys are language names
+    # and values are lists of regex patterns (strings) used to detect calls/identifiers.
+    taint_sources: Dict[str, List[str]] = field(default_factory=lambda: {})
+    taint_sinks: Dict[str, List[str]] = field(default_factory=lambda: {})
 
 
 @dataclass

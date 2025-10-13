@@ -373,6 +373,19 @@ class QueryExecutor:
         
         # Remove any existing output modifiers
         query = query.strip()
+        
+        # Check if query already ends with .toJsonPretty (multi-line queries add it manually)
+        if query.endswith('.toJsonPretty'):
+            return query
+        
+        # Check if this is a multi-line query (contains newlines or val statements)
+        # Multi-line queries already handle their own JSON output
+        if '\n' in query or query.startswith('val ') or 'if (' in query:
+            # Multi-line queries should have .toJsonPretty at the end already
+            # If not, something is wrong, but don't modify them
+            return query
+        
+        # For single-line queries, normalize to JSON output
         if query.endswith('.l'):
             query = query[:-2]
         elif query.endswith('.toList'):
