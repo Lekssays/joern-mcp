@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import time
 from datetime import datetime, UTC
 from typing import Optional, Dict, Any
@@ -181,7 +182,6 @@ def register_tools(mcp, services: dict):
                 else:
                     # Copy to playground/codebases with cache key if not exists
                     validate_local_path(source_path)
-                    import shutil
 
                     # Validate the path exists on the host system
                     if not os.path.isabs(source_path):
@@ -323,7 +323,6 @@ def register_tools(mcp, services: dict):
                         )
                     else:
                         # Copy to playground/codebases with cache key if not exists
-                        import shutil
 
                         # Validate the path exists on the host system
                         if not os.path.isabs(source_path):
@@ -420,8 +419,6 @@ def register_tools(mcp, services: dict):
                     )
                     # Cache the CPG after successful generation
                     if os.path.exists(cpg_path):
-                        import shutil
-
                         shutil.copy2(cpg_path, cpg_cache_path)
                         logger.info(f"Cached CPG to: {cpg_cache_path}")
 
@@ -2243,6 +2240,7 @@ def register_tools(mcp, services: dict):
             source_escaped = re.escape(source_method)
             target_escaped = re.escape(target_method)
 
+            # TODO(ahmed): This currently only checks direct calls and one level deep.
             # Query to check reachability: can source reach target through call graph?
             # We traverse the call graph iteratively for up to 5 levels deep
             # Level 1: direct calls from source
