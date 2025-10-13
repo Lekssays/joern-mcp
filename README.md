@@ -79,10 +79,13 @@ python main.py
 - **`create_cpg_session`**: Initialize analysis session from local path or GitHub URL
 - **`run_cpgql_query`**: Execute synchronous CPGQL queries with JSON output
 - **`run_cpgql_query_async`**: Execute asynchronous queries with status tracking
+- **`get_query_status`**: Check status of asynchronously running queries
+- **`get_query_result`**: Retrieve results from completed queries
+- **`cleanup_queries`**: Clean up old completed query results
 - **`get_session_status`**: Check session state and metadata
 - **`list_sessions`**: View active sessions with filtering
 - **`close_session`**: Clean up session resources
-- **`list_queries`**: Get pre-built security and quality queries
+- **`cleanup_all_sessions`**: Clean up multiple sessions and containers
 
 ### Code Browsing Tools
 
@@ -95,6 +98,15 @@ python main.py
 - **`list_parameters`**: Get detailed parameter information for methods
 - **`find_literals`**: Search for hardcoded values (strings, numbers, API keys, etc)
 - **`get_code_snippet`**: Retrieve code snippets from files with line range
+
+### Security Analysis Tools
+
+- **`find_taint_sources`**: Locate likely external input points (taint sources)
+- **`find_taint_sinks`**: Locate dangerous sinks where tainted data could cause vulnerabilities
+- **`find_taint_flows`**: Find dataflow paths from sources to sinks using Joern dataflow primitives
+- **`check_method_reachability`**: Check if one method can reach another through the call graph
+- **`list_taint_paths`**: List detailed taint flow paths from sources to sinks
+- **`get_program_slice`**: Build a program slice from a specific line or call
 
 ### Example Usage
 
@@ -176,30 +188,67 @@ python main.py
     "query": "cpg.method.name.l"
   }
 }
+
+# Find potential security vulnerabilities
+{
+  "tool": "find_taint_sources",
+  "arguments": {
+    "session_id": "abc-123-def",
+    "language": "c"
+  }
+}
+
+# Check for data flows from sources to sinks
+{
+  "tool": "find_taint_flows",
+  "arguments": {
+    "session_id": "abc-123-def",
+    "source_patterns": ["getenv", "fgets"],
+    "sink_patterns": ["system", "sprintf"]
+  }
+}
+
+# Get detailed taint paths
+{
+  "tool": "list_taint_paths",
+  "arguments": {
+    "session_id": "abc-123-def",
+    "source_pattern": "getenv",
+    "sink_pattern": "system",
+    "max_paths": 5
+  }
+}
+
+# Build program slice for security analysis
+{
+  "tool": "get_program_slice",
+  "arguments": {
+    "session_id": "abc-123-def",
+    "filename": "main.c",
+    "line_number": 42,
+    "call_name": "memcpy"
+  }
+}
 ```
 
-### Pre-Built Queries
+### Security Analysis Capabilities
 
-The `list_queries` tool provides 20+ pre-configured queries including:
+The security analysis tools provide comprehensive vulnerability detection including:
 
-**Security:**
-- SQL injection detection
-- XSS vulnerabilities
-- Hardcoded secrets
-- Command injection
-- Path traversal
+**Taint Analysis:**
+- Source identification: `find_taint_sources` locates external input points
+- Sink identification: `find_taint_sinks` finds dangerous operations
+- Flow analysis: `find_taint_flows` traces data from sources to sinks
+- Path enumeration: `list_taint_paths` provides detailed propagation chains
 
-**Memory Safety:**
-- Buffer overflow risks
-- Memory leaks
-- Null pointer dereferences
-- Uninitialized variables
+**Program Slicing:**
+- Backward slicing: `get_program_slice` shows all code affecting a specific operation
+- Data dependencies: Variable assignments and data flow tracking
+- Control dependencies: Conditional statements affecting execution
 
-**Code Quality:**
-- All methods/functions
-- Control structures
-- Function calls
-- String literals
+**Reachability Analysis:**
+- Method connectivity: `check_method_reachability` verifies call graph connections
+- Impact analysis: Understand potential execution paths
 
 ## Configuration
 
