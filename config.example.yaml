@@ -63,8 +63,8 @@ cpg:
     - "perf.*"
     
     # Documentation and examples (both root level and nested, with wildcards)
-    - ".*/docs?/.*"
-    - "docs?/.*"
+    - ".*/doc?/.*"
+    - "doc?/.*"
     - ".*/documentation.*"
     - "documentation.*"
     - ".*/example.*"
@@ -188,6 +188,10 @@ cpg:
     - csharp
     - php
     - ruby
+    - swift
+    - jimple
+    - ghidra
+  
   taint_sources:
     c:
       - getenv
@@ -197,27 +201,269 @@ cpg:
       - recv
       - accept
       - fopen
+      - gets
+      - getchar
+      - fscanf
+      - fread
+      - recvfrom
+      - recvmsg
     cpp:
       - std::cin
       - getline
       - recv
       - accept
       - fopen
+      - std::ifstream
+      - std::fstream
+      - std::getline
+    java:
+      - java.util.Scanner.next
+      - java.util.Scanner.nextLine
+      - java.io.BufferedReader.readLine
+      - java.lang.System.in.read
+      - javax.servlet.http.HttpServletRequest.getParameter
+      - javax.servlet.http.HttpServletRequest.getQueryString
+      - javax.servlet.http.HttpServletRequest.getHeader
+      - java.io.FileInputStream
+      - java.io.FileReader
+      - java.net.Socket.getInputStream
+      - java.net.ServerSocket.accept
+    javascript:
+      - prompt
+      - document.location
+      - window.location
+      - req.query
+      - req.body
+      - req.params
+      - process.argv
+      - process.env
+      - fs.readFile
+      - fs.readFileSync
+      - readline.question
+    python:
+      - input
+      - sys.argv
+      - os.environ
+      - request.args
+      - request.form
+      - request.values
+      - sys.stdin.read
+      - sys.stdin.readline
+      - open
+      - file.read
+    go:
+      - bufio.Scanner.Scan
+      - bufio.Scanner.Text
+      - os.Args
+      - os.Getenv
+      - http.Request.FormValue
+      - http.Request.PostFormValue
+      - http.Request.Header
+      - io.ReadAll
+      - os.Open
+      - net.Conn.Read
+    kotlin:
+      - java.util.Scanner.next
+      - java.util.Scanner.nextLine
+      - kotlin.io.readLine
+      - kotlin.io.readln
+      - javax.servlet.http.HttpServletRequest.getParameter
+      - java.io.FileInputStream
+      - java.net.Socket.getInputStream
+      - kotlin.collections.get
+      - kotlin.collections.elementAt
+    csharp:
+      - System.Console.ReadLine
+      - System.Console.Read
+      - System.Environment.GetEnvironmentVariable
+      - System.Environment.GetEnvironmentVariables
+      - Microsoft.AspNetCore.Http.HttpRequest.Query
+      - Microsoft.AspNetCore.Http.HttpRequest.Form
+      - Microsoft.AspNetCore.Http.HttpRequest.Headers
+      - System.IO.File.ReadAllText
+      - System.IO.File.ReadAllLines
+      - System.IO.StreamReader.ReadToEnd
+    ghidra:
+      - getBytes
+      - getString
+      - getInt
+      - getLong
+      - read
+      - readByte
+      - readInt
+      - readLong
+    jimple:
+      - java.util.Scanner.next
+      - java.util.Scanner.nextLine
+      - java.io.BufferedReader.readLine
+      - java.lang.System.in.read
+      - javax.servlet.http.HttpServletRequest.getParameter
+    php:
+      - $_GET
+      - $_POST
+      - $_REQUEST
+      - $_COOKIE
+      - $_SERVER
+      - getenv
+      - file_get_contents
+      - fread
+      - fgets
+      - filter_input
+    ruby:
+      - gets
+      - readline
+      - ARGV
+      - ENV
+      - params
+      - request.params
+      - request.query_parameters
+      - request.request_parameters
+      - File.read
+      - IO.read
+    swift:
+      - readLine
+      - CommandLine.arguments
+      - ProcessInfo.processInfo.environment
+      - URLSession.dataTask
+      - FileManager.contents
+      - InputStream.read
+      - String.init
+      - Data.init
   taint_sinks:
     c:
       - system
       - popen
       - execl
       - execv
+      - execve
       - sprintf
       - fprintf
+      - snprintf
+      - vsprintf
+      - vfprintf
+      - strcpy
+      - strcat
+      - gets
     cpp:
       - system
       - popen
       - std::ofstream
       - sprintf
       - snprintf
-
+      - std::string.operator+
+      - strcpy
+      - strcat
+      - std::system
+    java:
+      - java.lang.Runtime.exec
+      - java.lang.ProcessBuilder
+      - java.sql.Statement.executeQuery
+      - java.sql.PreparedStatement.executeQuery
+      - java.io.FileWriter
+      - java.io.FileOutputStream
+      - java.io.PrintWriter
+      - javax.script.ScriptEngine.eval
+      - java.lang.Class.forName
+      - java.io.ObjectInputStream
+    javascript:
+      - eval
+      - Function
+      - document.write
+      - document.writeln
+      - innerHTML
+      - outerHTML
+      - insertAdjacentHTML
+      - fs.writeFile
+      - fs.writeFileSync
+      - child_process.exec
+      - child_process.execSync
+      - require
+    python:
+      - eval
+      - exec
+      - subprocess.call
+      - subprocess.run
+      - subprocess.Popen
+      - os.system
+      - os.popen
+      - os.exec
+      - pickle.load
+      - pickle.loads
+      - yaml.load
+      - json.loads
+    go:
+      - exec.Command
+      - os/exec.Command
+      - sql.Query
+      - sql.Exec
+      - os.OpenFile
+      - os.WriteFile
+      - html/template.HTML
+      - text/template.HTML
+      - os/exec.LookPath
+    kotlin:
+      - java.lang.Runtime.exec
+      - java.lang.ProcessBuilder
+      - java.sql.Statement.executeQuery
+      - java.io.FileWriter
+      - kotlin.io.print
+      - kotlin.io.println
+      - javax.script.ScriptEngine.eval
+    csharp:
+      - System.Diagnostics.Process.Start
+      - System.Data.SqlClient.SqlCommand
+      - System.IO.File.WriteAllText
+      - System.IO.File.WriteAllLines
+      - System.IO.StreamWriter.Write
+      - Microsoft.AspNetCore.Mvc.ContentResult
+      - System.Web.HttpResponse.Write
+      - System.Xml.XmlDocument.LoadXml
+    ghidra:
+      - execute
+      - run
+      - eval
+      - write
+      - createFile
+      - writeBytes
+    jimple:
+      - java.lang.Runtime.exec
+      - java.lang.ProcessBuilder
+      - java.sql.Statement.executeQuery
+      - java.io.FileWriter
+      - java.io.FileOutputStream
+    php:
+      - eval
+      - system
+      - exec
+      - shell_exec
+      - passthru
+      - include
+      - require
+      - file_put_contents
+      - fwrite
+      - echo
+      - print
+      - printf
+    ruby:
+      - eval
+      - system
+      - exec
+      - backtick
+      - File.open
+      - IO.popen
+      - Kernel.open
+      - YAML.load
+      - JSON.parse
+      - ERB.new
+    swift:
+      - Process
+      - FileManager.createFile
+      - FileManager.write
+      - NSExpression
+      - NSPredicate
+      - NSString.stringWithFormat
+      - Data.write
+      - OutputStream.write
 
 query:
   timeout: ${QUERY_TIMEOUT:30}
