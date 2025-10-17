@@ -10,7 +10,6 @@ A Model Context Protocol (MCP) server that provides AI assistants with static co
 - **Session-Based**: Persistent CPG sessions with automatic cleanup
 - **Redis-Backed**: Fast caching and session management
 - **Async Queries**: Non-blocking CPG generation and query execution
-- **Built-in Security Queries**: Pre-configured queries for common vulnerabilities
 
 ## Quick Start
 
@@ -408,3 +407,6 @@ python main.py
 - [Joern](https://github.com/joernio/joern) - Static analysis platform
 - [FastMCP](https://github.com/jlowin/fastmcp) - MCP framework
 - [Model Context Protocol](https://modelcontextprotocol.io/) - MCP specification
+
+---
+Built with ❤️ in Doha 🇶🇦
