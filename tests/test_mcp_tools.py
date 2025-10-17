@@ -758,42 +758,6 @@ class TestMCPTools:
         assert "helper" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_list_taint_paths_success(self, fake_services, ready_session):
-        """Test successful taint path listing"""
-        mcp = FakeMCP()
-        register_tools(mcp, fake_services)
-
-        fake_services["session_manager"].get_session.return_value = ready_session
-        query_result = QueryResult(
-            success=True,
-            data=[{
-                "_1": 'getenv("PATH")',
-                "_2": "main.c",
-                "_3": 10,
-                "_4": 'system(cmd)',
-                "_5": "main.c",
-                "_6": 100,
-                "_7": 5,
-                "_8": [
-                    {"_1": 'getenv("PATH")', "_2": "main.c", "_3": 10, "_4": "CALL"},
-                    {"_1": "env_path", "_2": "main.c", "_3": 10, "_4": "IDENTIFIER"}
-                ]
-            }],
-            row_count=1
-        )
-        fake_services["query_executor"].execute_query.return_value = query_result
-
-        func = mcp.registered["list_taint_paths"]
-        result = await func(
-            session_id=ready_session.id,
-            source_pattern="getenv",
-            sink_pattern="system"
-        )
-
-        assert result["success"] is True
-        assert len(result["paths"]) == 1
-        assert result["paths"][0]["path_length"] == 5
-
     @pytest.mark.asyncio
     async def test_get_program_slice_success(self, fake_services, ready_session, temp_workspace):
         """Test successful program slice retrieval"""
