@@ -1,9 +1,10 @@
 import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
+from datetime import datetime, UTC
 
 from src.tools.mcp_tools import register_tools
-from src.models import Session, CPGConfig, Config, QueryResult
+from src.models import Session, CPGConfig, Config, QueryResult, SessionStatus
 
 
 class FakeMCP:
@@ -91,12 +92,46 @@ async def test_find_taint_sinks_success(fake_services):
 
 @pytest.mark.asyncio
 async def test_find_taint_flows_success(fake_services):
-    # For flows, adjust the mocked execute_query to return tuple-like fields
+    # Setup mock for source, sink, and flow queries
     services = fake_services
-    services["query_executor"].execute_query = AsyncMock(return_value=QueryResult(
-        success=True,
-        data=[{"_1": "char *s = getenv(\"FOO\")", "_2": "core.c", "_3": 10, "_4": "system(cmd)", "_5": "core.c", "_6": 42, "_7": 3}],
-        row_count=1
+    
+    # Create side effect to return different results for 3 queries
+    source_result = QueryResult(success=True, data=[{
+        "_1": 1001, "_2": 'getenv("FOO")', "_3": "core.c", "_4": 10, "_5": "main"
+    }], row_count=1)
+    
+    sink_result = QueryResult(success=True, data=[{
+        "_1": 1002, "_2": 'system(cmd)', "_3": "core.c", "_4": 42, "_5": "execute"
+    }], row_count=1)
+    
+    flow_result = QueryResult(success=True, data=[{
+        "_1": 0, "_2": 3,
+        "_3": [
+            {"_1": 'getenv("FOO")', "_2": "core.c", "_3": 10, "_4": "CALL"},
+            {"_1": "cmd", "_2": "core.c", "_3": 25, "_4": "IDENTIFIER"},
+            {"_1": 'system(cmd)', "_2": "core.c", "_3": 42, "_4": "CALL"}
+        ]
+    }], row_count=1)
+    
+    call_count = [0]
+    async def mock_execute(*args, **kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return source_result
+        elif call_count[0] == 2:
+            return sink_result
+        else:
+            return flow_result
+    
+    services["query_executor"].execute_query = AsyncMock(side_effect=mock_execute)
+    services["session_manager"].get_session = AsyncMock(return_value=Session(
+        id=services['session_id'],
+        language="c",
+        status=SessionStatus.READY.value,
+        source_path="/path",
+        source_type="local",
+        created_at=datetime.now(UTC),
+        last_accessed=datetime.now(UTC)
     ))
 
     mcp = FakeMCP()
@@ -105,9 +140,15 @@ async def test_find_taint_flows_success(fake_services):
     func = mcp.registered.get("find_taint_flows")
     assert func is not None
 
-    res = await func(session_id=fake_services['session_id'], timeout=10, limit=10)
+    res = await func(
+        session_id=services['session_id'],
+        source_node_id="1001",
+        sink_node_id="1002",
+        timeout=10
+    )
 
     assert res.get("success") is True
+    assert res["source"]["node_id"] == 1001
+    assert res["sink"]["node_id"] == 1002
     assert "flows" in res
     assert isinstance(res["flows"], list)
-    assert res["total"] == 1

@@ -657,32 +657,84 @@ class TestMCPTools:
 
     @pytest.mark.asyncio
     async def test_find_taint_flows_success(self, fake_services, ready_session):
-        """Test successful taint flow finding"""
+        """Test successful taint flow finding with node IDs"""
         mcp = FakeMCP()
         register_tools(mcp, fake_services)
 
         fake_services["session_manager"].get_session.return_value = ready_session
-        query_result = QueryResult(
+        
+        # Mock for source node lookup query
+        source_info_result = QueryResult(
             success=True,
             data=[{
-                "_1": 'getenv("PATH")',
-                "_2": "main.c",
-                "_3": 10,
-                "_4": 'system(cmd)',
-                "_5": "main.c",
-                "_6": 100,
-                "_7": 3
+                "_1": 12345,  # node_id
+                "_2": 'getenv("PATH")',
+                "_3": "main.c",
+                "_4": 42,
+                "_5": "main"
             }],
             row_count=1
         )
-        fake_services["query_executor"].execute_query.return_value = query_result
+        
+        # Mock for sink node lookup query
+        sink_info_result = QueryResult(
+            success=True,
+            data=[{
+                "_1": 67890,  # node_id
+                "_2": 'system(cmd)',
+                "_3": "main.c",
+                "_4": 100,
+                "_5": "execute_command"
+            }],
+            row_count=1
+        )
+        
+        # Mock for flow query - returns one flow with path information
+        flow_query_result = QueryResult(
+            success=True,
+            data=[{
+                "_1": 0,  # flow_idx
+                "_2": 3,  # path_length
+                "_3": [  # nodes
+                    {"_1": 'getenv("PATH")', "_2": "main.c", "_3": 42, "_4": "CALL"},
+                    {"_1": "path_var", "_2": "main.c", "_3": 45, "_4": "IDENTIFIER"},
+                    {"_1": 'system(cmd)', "_2": "main.c", "_3": 100, "_4": "CALL"}
+                ]
+            }],
+            row_count=1
+        )
+        
+        # Setup mock to return different results for different queries
+        call_count = [0]
+        async def mock_execute_query(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return source_info_result
+            elif call_count[0] == 2:
+                return sink_info_result
+            else:
+                return flow_query_result
+        
+        fake_services["query_executor"].execute_query.side_effect = mock_execute_query
 
         func = mcp.registered["find_taint_flows"]
-        result = await func(session_id=ready_session.id)
+        result = await func(
+            session_id=ready_session.id,
+            source_node_id="12345",
+            sink_node_id="67890"
+        )
 
         assert result["success"] is True
+        assert result["source"]["node_id"] == 12345
+        assert result["source"]["code"] == 'getenv("PATH")'
+        assert result["sink"]["node_id"] == 67890
+        assert result["sink"]["code"] == 'system(cmd)'
         assert len(result["flows"]) == 1
         assert result["flows"][0]["path_length"] == 3
+        assert len(result["flows"][0]["nodes"]) == 3
+        assert len(result["flows"]) == 1
+        assert result["flows"][0]["path_length"] == 3
+        assert len(result["flows"][0]["nodes"]) == 3
 
     @pytest.mark.asyncio
     async def test_check_method_reachability_success(self, fake_services, ready_session):
@@ -1052,22 +1104,45 @@ class TestEdgeCases:
 
     @pytest.mark.asyncio
     async def test_taint_flow_filters(self, fake_services, ready_session):
-        """Test taint flow with various filters"""
+        """Test taint flow with node IDs and various filters"""
         mcp = FakeMCP()
         register_tools(mcp, fake_services)
 
         fake_services["session_manager"].get_session.return_value = ready_session
-        query_result = QueryResult(success=True, data=[], row_count=0)
-        fake_services["query_executor"].execute_query.return_value = query_result
+        
+        # Mock source node lookup
+        source_result = QueryResult(success=True, data=[{
+            "_1": 111, "_2": 'getenv("X")', "_3": "file.c", "_4": 10, "_5": "func1"
+        }], row_count=1)
+        
+        # Mock sink node lookup
+        sink_result = QueryResult(success=True, data=[{
+            "_1": 222, "_2": 'system(cmd)', "_3": "file.c", "_4": 20, "_5": "func2"
+        }], row_count=1)
+        
+        # Mock flow query
+        flow_result = QueryResult(success=True, data=[], row_count=0)
+        
+        call_count = [0]
+        async def mock_execute(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return source_result
+            elif call_count[0] == 2:
+                return sink_result
+            else:
+                return flow_result
+        
+        fake_services["query_executor"].execute_query.side_effect = mock_execute
 
         func = mcp.registered["find_taint_flows"]
         result = await func(
             session_id=ready_session.id,
-            source_patterns=["getenv", "fgets"],
-            sink_patterns=["system", "exec"],
+            source_node_id="111",
+            sink_node_id="222",
             max_path_length=5
         )
 
         assert result["success"] is True
         assert result["flows"] == []
-        assert result["total"] == 0
+        assert result["total_flows"] == 0

@@ -2124,49 +2124,92 @@ def register_tools(mcp, services: dict):
     @mcp.tool()
     async def find_taint_flows(
         session_id: str,
-        source_patterns: Optional[list] = None,
-        sink_patterns: Optional[list] = None,
-        max_path_length: int = 10,
-        timeout: int = 30,
-        limit: int = 100,
+        source_node_id: Optional[str] = None,
+        sink_node_id: Optional[str] = None,
+        source_location: Optional[str] = None,
+        sink_location: Optional[str] = None,
+        max_path_length: int = 20,
+        timeout: int = 60,
     ) -> Dict[str, Any]:
         """
-        Find dataflow paths from sources to sinks using Joern dataflow primitives.
+        Find dataflow paths from a specific source to a specific sink using Joern dataflow primitives.
 
-        Analyze data flow from taint sources (external input points) to taint sinks
-        (security-sensitive operations) to identify potential vulnerabilities. This
-        is a computationally expensive operation that may take significant time.
+        Analyze data flow from a taint source (external input point or function call) to a taint sink
+        (security-sensitive operation) to identify potential vulnerabilities. Provides detailed path
+        information showing how data flows through the call graph and data dependencies.
+
+        This is a focused taint analysis task that works with specific source and sink identifiers,
+        making it practical for vulnerability investigation and security code review.
+
+        **Important**: Since function names like "malloc", "read", or "system" can appear many times
+        in a codebase, you MUST specify which specific call instance to analyze. Use node IDs (obtained
+        from find_taint_sources/find_taint_sinks) or specify exact locations.
 
         Args:
             session_id: The session ID from create_cpg_session
-            source_patterns: Optional list of regex patterns for source function names
-                If not provided, uses default patterns from config for the session's language
-            sink_patterns: Optional list of regex patterns for sink function names
-                If not provided, uses default patterns from config for the session's language
-            max_path_length: Maximum length of dataflow paths to consider (default: 10)
-                Flows with more than this many elements will be filtered out
-            timeout: Maximum execution time in seconds (default: 30)
-            limit: Maximum number of flow results to return (default: 100)
+            source_node_id: Node ID of the source call/method (recommended method - get from find_taint_sources)
+                Example: "12345" - the exact CPG node ID for a specific getenv() call
+            sink_node_id: Node ID of the sink call/method (recommended method - get from find_taint_sinks)
+                Example: "67890" - the exact CPG node ID for a specific system() call
+            source_location: Alternative to node_id: specify as "filename:line_number" or "filename:line_number:method_name"
+                Example: "main.c:42" or "main.c:42:main"
+            sink_location: Alternative to node_id: specify as "filename:line_number" or "filename:line_number:method_name"
+                Example: "main.c:100" or "main.c:100:execute_command"
+            max_path_length: Maximum length of dataflow paths to consider in elements (default: 20)
+                Paths with more elements will be filtered out to avoid extremely long chains
+            timeout: Maximum execution time in seconds (default: 60)
 
         Returns:
             {
                 "success": true,
+                "source": {
+                    "node_id": "12345",
+                    "code": "getenv(\"PATH\")",
+                    "filename": "main.c",
+                    "lineNumber": 42,
+                    "method": "main"
+                },
+                "sink": {
+                    "node_id": "67890",
+                    "code": "system(cmd)",
+                    "filename": "main.c",
+                    "lineNumber": 100,
+                    "method": "execute_command"
+                },
                 "flows": [
                     {
-                        "source_code": "getenv(\"PATH\")",
-                        "source_file": "main.c",
-                        "source_line": 42,
-                        "sink_code": "system(cmd)",
-                        "sink_file": "main.c",
-                        "sink_line": 100,
-                        "path_length": 3
+                        "path_id": 0,
+                        "path_length": 5,
+                        "nodes": [
+                            {
+                                "step": 0,
+                                "code": "getenv(\"PATH\")",
+                                "filename": "main.c",
+                                "lineNumber": 42,
+                                "nodeType": "CALL"
+                            },
+                            {
+                                "step": 1,
+                                "code": "path_var",
+                                "filename": "main.c",
+                                "lineNumber": 45,
+                                "nodeType": "IDENTIFIER"
+                            },
+                            ...
+                        ]
                     }
                 ],
-                "total": 1
+                "total_flows": 1
             }
         """
         try:
             validate_session_id(session_id)
+
+            # Validate that we have proper source and sink specifications
+            if not source_node_id and not source_location:
+                raise ValidationError("Either source_node_id or source_location must be provided")
+            if not sink_node_id and not sink_location:
+                raise ValidationError("Either sink_node_id or sink_location must be provided")
 
             session_manager = services["session_manager"]
             query_executor = services["query_executor"]
@@ -2180,37 +2223,109 @@ def register_tools(mcp, services: dict):
 
             await session_manager.touch_session(session_id)
 
-            lang = session.language or "c"
-            cfg = services["config"]
-            taint_src_cfg = getattr(cfg.cpg, "taint_sources", {}) if hasattr(cfg.cpg, "taint_sources") else {}
-            taint_sink_cfg = getattr(cfg.cpg, "taint_sinks", {}) if hasattr(cfg.cpg, "taint_sinks") else {}
+            # Resolve source to actual node
+            source_info = None
+            if source_node_id:
+                # Direct node ID lookup
+                query = f'cpg.id({source_node_id}).map(n => (n.id, n.code, n.file.name.headOption.getOrElse("unknown"), n.lineNumber.getOrElse(-1), Try(n.method.fullName).getOrElse("unknown"))).headOption'
+            else:
+                # Parse location: "filename:line_number" or "filename:line_number:method_name"
+                parts = source_location.split(":")
+                if len(parts) < 2:
+                    raise ValidationError("source_location must be in format 'filename:line' or 'filename:line:method'")
+                
+                filename = parts[0]
+                line_num = parts[1]
+                method_name = parts[2] if len(parts) > 2 else None
+                
+                if method_name:
+                    query = f'cpg.file.name("{filename}").call.lineNumber({line_num}).where(_.method.fullName.contains("{method_name}")).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).headOption'
+                else:
+                    query = f'cpg.file.name("{filename}").call.lineNumber({line_num}).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).headOption'
+            
+            result_src = await query_executor.execute_query(
+                session_id=session_id,
+                cpg_path="/workspace/cpg.bin",
+                query=query,
+                timeout=10,
+                limit=1,
+            )
 
-            srcs = source_patterns or taint_src_cfg.get(lang, [])
-            snks = sink_patterns or taint_sink_cfg.get(lang, [])
+            if result_src.success and result_src.data and len(result_src.data) > 0:
+                item = result_src.data[0]
+                if isinstance(item, dict) and item.get("_1"):
+                    source_info = {
+                        "node_id": item.get("_1"),
+                        "code": item.get("_2"),
+                        "filename": item.get("_3"),
+                        "lineNumber": item.get("_4"),
+                        "method": item.get("_5"),
+                    }
 
-            if not srcs or not snks:
-                # If either is empty, return empty result quickly
-                return {"success": True, "flows": [], "total": 0}
+            # Resolve sink to actual node
+            sink_info = None
+            if sink_node_id:
+                # Direct node ID lookup
+                query = f'cpg.id({sink_node_id}).map(n => (n.id, n.code, n.file.name.headOption.getOrElse("unknown"), n.lineNumber.getOrElse(-1), Try(n.method.fullName).getOrElse("unknown"))).headOption'
+            else:
+                # Parse location: "filename:line_number" or "filename:line_number:method_name"
+                parts = sink_location.split(":")
+                if len(parts) < 2:
+                    raise ValidationError("sink_location must be in format 'filename:line' or 'filename:line:method'")
+                
+                filename = parts[0]
+                line_num = parts[1]
+                method_name = parts[2] if len(parts) > 2 else None
+                
+                if method_name:
+                    query = f'cpg.file.name("{filename}").call.lineNumber({line_num}).where(_.method.fullName.contains("{method_name}")).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).headOption'
+                else:
+                    query = f'cpg.file.name("{filename}").call.lineNumber({line_num}).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).headOption'
+            
+            result_snk = await query_executor.execute_query(
+                session_id=session_id,
+                cpg_path="/workspace/cpg.bin",
+                query=query,
+                timeout=10,
+                limit=1,
+            )
 
-            # Remove trailing parens from patterns for proper regex matching
-            cleaned_srcs = [p.rstrip("(") for p in srcs]
-            cleaned_snks = [p.rstrip("(") for p in snks]
-            src_joined = "|".join([re.escape(p) for p in cleaned_srcs])
-            snk_joined = "|".join([re.escape(p) for p in cleaned_snks])
+            if result_snk.success and result_snk.data and len(result_snk.data) > 0:
+                item = result_snk.data[0]
+                if isinstance(item, dict) and item.get("_1"):
+                    sink_info = {
+                        "node_id": item.get("_1"),
+                        "code": item.get("_2"),
+                        "filename": item.get("_3"),
+                        "lineNumber": item.get("_4"),
+                        "method": item.get("_5"),
+                    }
 
-            # Build a query that finds dataflow paths from sources to sinks
-            # Use Joern's sink.reachableByFlows(source) to find actual dataflow paths
-            # Note: The query must .l (list) the sources and sinks before passing to reachableByFlows
-            # Filter by max_path_length to avoid excessively long paths
+            # If either source or sink not found, return early
+            if not source_info or not sink_info:
+                return {
+                    "success": True,
+                    "source": source_info,
+                    "sink": sink_info,
+                    "flows": [],
+                    "total_flows": 0,
+                    "message": f"Could not resolve source or sink from provided identifiers"
+                }
+
+            # Build dataflow query using reachableByFlows
+            # This finds all dataflow paths from source to sink
+            source_id = source_info["node_id"]
+            sink_id = sink_info["node_id"]
+            
             query = (
-                f'val sources = cpg.call.name("{src_joined}").l\n'
-                f'val sinks = cpg.call.name("{snk_joined}").l\n'
-                f'sinks.reachableByFlows(sources).filter(flow => flow.elements.size <= {max_path_length}).map(flow => {{\n'
-                f'  val elems = flow.elements\n'
-                f'  (elems.head.code, elems.head.file.name.headOption.getOrElse("unknown"), elems.head.lineNumber.getOrElse(-1), '
-                f'elems.last.code, elems.last.file.name.headOption.getOrElse("unknown"), elems.last.lineNumber.getOrElse(-1), '
-                f'elems.size)\n'
-                f'}}).take({limit})'
+                f'val source = cpg.id({source_id}).l\n'
+                f'val sink = cpg.id({sink_id}).l\n'
+                f'if (source.nonEmpty && sink.nonEmpty) {{\n'
+                f'  val flows = sink.reachableByFlows(source).filter(f => f.elements.size <= {max_path_length}).toList\n'
+                f'  flows.zipWithIndex.map {{ case (flow, flowIdx) =>\n'
+                f'    (flowIdx, flow.elements.size, flow.elements.map(e => (e.code, e.file.name.headOption.getOrElse("unknown"), e.lineNumber.getOrElse(-1), e.label)).l)\n'
+                f'  }}\n'
+                f'}} else List[(Int, Int, List[(String, String, Int, String)])]()'
             )
 
             result = await query_executor.execute_query(
@@ -2218,26 +2333,48 @@ def register_tools(mcp, services: dict):
                 cpg_path="/workspace/cpg.bin",
                 query=query,
                 timeout=timeout,
-                limit=limit,
+                limit=1000,  # Allow many results to capture all paths
             )
 
             if not result.success:
-                return {"success": False, "error": {"code": "QUERY_ERROR", "message": result.error}}
+                return {
+                    "success": False,
+                    "error": {"code": "QUERY_ERROR", "message": result.error},
+                }
 
+            # Parse flows from result
             flows = []
             for item in result.data:
                 if isinstance(item, dict):
+                    flow_idx = item.get("_1")
+                    path_length = item.get("_2")
+                    nodes_data = item.get("_3", [])
+                    
+                    # Build node list for this path
+                    nodes = []
+                    for step, node_data in enumerate(nodes_data):
+                        if isinstance(node_data, dict):
+                            nodes.append({
+                                "step": step,
+                                "code": node_data.get("_1", ""),
+                                "filename": node_data.get("_2", ""),
+                                "lineNumber": node_data.get("_3", -1),
+                                "nodeType": node_data.get("_4", ""),
+                            })
+                    
                     flows.append({
-                        "source_code": item.get("_1"),
-                        "source_file": item.get("_2"),
-                        "source_line": item.get("_3"),
-                        "sink_code": item.get("_4"),
-                        "sink_file": item.get("_5"),
-                        "sink_line": item.get("_6"),
-                        "path_length": item.get("_7"),
+                        "path_id": flow_idx,
+                        "path_length": path_length,
+                        "nodes": nodes,
                     })
 
-            return {"success": True, "flows": flows, "total": len(flows)}
+            return {
+                "success": True,
+                "source": source_info,
+                "sink": sink_info,
+                "flows": flows,
+                "total_flows": len(flows),
+            }
 
         except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
             logger.error(f"Error finding taint flows: {e}")
