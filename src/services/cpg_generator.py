@@ -203,28 +203,77 @@ class CPGGenerator:
         return f"/opt/joern/joern-cli/{base_command}"
 
     async def _validate_cpg_async(self, container, cpg_path: str) -> bool:
-        """Validate that CPG file was created successfully"""
+        """Validate that CPG file was created successfully and is not empty"""
         try:
             loop = asyncio.get_event_loop()
             
             def _check_file():
-                # Check if file exists and get size using a more compatible command
-                result = container.exec_run(f"ls -la {cpg_path}")
+                # Check if file exists and get size using stat command
+                result = container.exec_run(f"stat {cpg_path}")
                 return result.output.decode('utf-8', errors='ignore').strip()
             
-            ls_result = await loop.run_in_executor(None, _check_file)
+            stat_result = await loop.run_in_executor(None, _check_file)
             
-            # If ls succeeded and doesn't show "No such file", the file exists
-            if "No such file" not in ls_result and cpg_path in ls_result:
-                logger.info(f"CPG file created: {ls_result}")
-                return True
-            else:
-                logger.error(f"CPG file not found: {ls_result}")
+            # Check if stat was successful (file exists)
+            if "No such file" in stat_result or "cannot stat" in stat_result:
+                logger.error(f"CPG file not found: {stat_result}")
                 return False
+            
+            # Extract file size from stat output
+            # stat output format contains "Size: <bytes>" line
+            file_size = await self._extract_file_size_async(container, cpg_path)
+            
+            if file_size is None:
+                logger.error("Could not determine CPG file size")
+                return False
+            
+            # Check if file is too small (empty or nearly empty)
+            # Joern CPGs typically have a minimum size; even small projects generate CPGs > 1KB
+            min_cpg_size = 1024  # 1KB minimum
+            
+            if file_size < min_cpg_size:
+                logger.error(
+                    f"CPG file is too small ({file_size} bytes), likely empty or corrupted. "
+                    f"Minimum expected size: {min_cpg_size} bytes"
+                )
+                return False
+            
+            logger.info(f"CPG file created successfully: {cpg_path} (size: {file_size} bytes)")
+            return True
             
         except Exception as e:
             logger.error(f"CPG validation failed: {e}")
             return False
+
+    async def _extract_file_size_async(self, container, cpg_path: str) -> Optional[int]:
+        """Extract file size from a file in the container"""
+        try:
+            loop = asyncio.get_event_loop()
+            
+            def _get_size():
+                # Use a more reliable method to get file size
+                result = container.exec_run(f"stat -c%s {cpg_path}")
+                return result.output.decode('utf-8', errors='ignore').strip()
+            
+            size_str = await loop.run_in_executor(None, _get_size)
+            
+            # Try to parse the size
+            try:
+                return int(size_str)
+            except ValueError:
+                # Fallback: try alternative command if stat -c doesn't work
+                logger.debug(f"stat -c command returned: {size_str}, trying alternative method")
+                
+                def _get_size_wc():
+                    result = container.exec_run(f"wc -c < {cpg_path}")
+                    return result.output.decode('utf-8', errors='ignore').strip()
+                
+                size_str = await loop.run_in_executor(None, _get_size_wc)
+                return int(size_str)
+                
+        except Exception as e:
+            logger.error(f"Failed to extract file size: {e}")
+            return None
 
     async def get_container_id(self, session_id: str) -> Optional[str]:
         """Get container ID for session"""

@@ -236,27 +236,119 @@ class TestCPGGenerator:
 
     @pytest.mark.asyncio
     async def test_validate_cpg_success(self, cpg_generator):
-        """Test successful CPG validation"""
+        """Test successful CPG validation with valid file size"""
         mock_container = MagicMock()
-        mock_exec_result = MagicMock()
-        mock_exec_result.output = b"-rw-r--r-- 1 user user 1024 Jan 1 12:00 /playground/cpgs/session-123.cpg"
-        mock_container.exec_run = MagicMock(return_value=mock_exec_result)
+        
+        # Mock stat command to return file exists
+        def mock_exec_run(cmd):
+            mock_result = MagicMock()
+            if "stat -c%s" in cmd:
+                # Return file size > 1KB
+                mock_result.output = b"5242880"  # 5MB
+            else:
+                mock_result.output = b"stat output..."
+            return mock_result
+        
+        mock_container.exec_run = mock_exec_run
 
-        result = await cpg_generator._validate_cpg_async(mock_container, "/playground/cpgs/session-123.cpg")
+        result = await cpg_generator._validate_cpg_async(mock_container, "/workspace/cpg.bin")
 
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_validate_cpg_failure(self, cpg_generator):
-        """Test CPG validation failure"""
+    async def test_validate_cpg_failure_file_not_found(self, cpg_generator):
+        """Test CPG validation failure when file doesn't exist"""
         mock_container = MagicMock()
         mock_exec_result = MagicMock()
-        mock_exec_result.output = b"ls: cannot access '/playground/cpgs/session-123.cpg': No such file or directory"
+        mock_exec_result.output = b"stat: cannot stat '/workspace/cpg.bin': No such file or directory"
         mock_container.exec_run = MagicMock(return_value=mock_exec_result)
 
-        result = await cpg_generator._validate_cpg_async(mock_container, "/playground/cpgs/session-123.cpg")
+        result = await cpg_generator._validate_cpg_async(mock_container, "/workspace/cpg.bin")
 
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_validate_cpg_failure_empty_file(self, cpg_generator):
+        """Test CPG validation failure when file is too small (empty or nearly empty)"""
+        mock_container = MagicMock()
+        
+        # Mock exec_run to return small file size
+        def mock_exec_run(cmd):
+            mock_result = MagicMock()
+            if "stat -c%s" in cmd:
+                # Return file size < 1KB (empty)
+                mock_result.output = b"0"
+            else:
+                mock_result.output = b"stat output..."
+            return mock_result
+        
+        mock_container.exec_run = mock_exec_run
+
+        result = await cpg_generator._validate_cpg_async(mock_container, "/workspace/cpg.bin")
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_validate_cpg_failure_too_small(self, cpg_generator):
+        """Test CPG validation failure when file is smaller than minimum threshold"""
+        mock_container = MagicMock()
+        
+        # Mock exec_run to return very small file size
+        def mock_exec_run(cmd):
+            mock_result = MagicMock()
+            if "stat -c%s" in cmd:
+                # Return file size < 1KB
+                mock_result.output = b"512"  # 512 bytes
+            else:
+                mock_result.output = b"stat output..."
+            return mock_result
+        
+        mock_container.exec_run = mock_exec_run
+
+        result = await cpg_generator._validate_cpg_async(mock_container, "/workspace/cpg.bin")
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_extract_file_size_success(self, cpg_generator):
+        """Test successful file size extraction"""
+        mock_container = MagicMock()
+        
+        def mock_exec_run(cmd):
+            mock_result = MagicMock()
+            if "stat -c%s" in cmd:
+                mock_result.output = b"5242880"  # 5MB
+            return mock_result
+        
+        mock_container.exec_run = mock_exec_run
+
+        result = await cpg_generator._extract_file_size_async(mock_container, "/workspace/cpg.bin")
+
+        assert result == 5242880
+
+    @pytest.mark.asyncio
+    async def test_extract_file_size_fallback(self, cpg_generator):
+        """Test file size extraction with fallback to wc command"""
+        mock_container = MagicMock()
+        
+        call_count = 0
+        def mock_exec_run(cmd):
+            nonlocal call_count
+            mock_result = MagicMock()
+            
+            if "stat -c%s" in cmd:
+                # First call fails with non-numeric output
+                mock_result.output = b"invalid"
+            elif "wc -c" in cmd:
+                # Fallback to wc
+                mock_result.output = b"1048576"  # 1MB
+            return mock_result
+        
+        mock_container.exec_run = mock_exec_run
+
+        result = await cpg_generator._extract_file_size_async(mock_container, "/workspace/cpg.bin")
+
+        assert result == 1048576
 
     @pytest.mark.asyncio
     async def test_get_container_id(self, cpg_generator):
