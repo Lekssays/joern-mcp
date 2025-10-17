@@ -2240,36 +2240,37 @@ def register_tools(mcp, services: dict):
             source_escaped = re.escape(source_method)
             target_escaped = re.escape(target_method)
 
-            # TODO(ahmed): This currently only checks direct calls and one level deep.
-            # Query to check reachability: can source reach target through call graph?
-            # We traverse the call graph iteratively for up to 5 levels deep
-            # Level 1: direct calls from source
-            # Level 2+: calls from those callees recursively
+            # Query to check reachability using depth-independent BFS traversal.
+            # Instead of manually checking levels 1-5, we use a recursive function
+            # to traverse the entire call graph regardless of depth.
             query = (
                 f'val source = cpg.method.name("{source_escaped}").l\n'
                 f'val target = cpg.method.name("{target_escaped}").l\n'
                 f'val reachable = if (source.nonEmpty && target.nonEmpty) {{\n'
-                f'  val level1 = source.head.call.callee.l\n'
-                f'  val foundAtLevel1 = level1.exists(_.name == "{target_escaped}")\n'
-                f'  if (foundAtLevel1) true else {{\n'
-                f'    val level2 = level1.flatMap(_.call.callee).name.dedup.l\n'
-                f'    val foundAtLevel2 = level2.contains("{target_escaped}")\n'
-                f'    if (foundAtLevel2) true else {{\n'
-                f'      val level3Methods = level1.flatMap(_.call.callee).l\n'
-                f'      val level3 = level3Methods.flatMap(_.call.callee).name.dedup.l\n'
-                f'      val foundAtLevel3 = level3.contains("{target_escaped}")\n'
-                f'      if (foundAtLevel3) true else {{\n'
-                f'        val level4Methods = level3Methods.flatMap(_.call.callee).l\n'
-                f'        val level4 = level4Methods.flatMap(_.call.callee).name.dedup.l\n'
-                f'        val foundAtLevel4 = level4.contains("{target_escaped}")\n'
-                f'        if (foundAtLevel4) true else {{\n'
-                f'          val level5Methods = level4Methods.flatMap(_.call.callee).l\n'
-                f'          val level5 = level5Methods.flatMap(_.call.callee).name.dedup.l\n'
-                f'          level5.contains("{target_escaped}")\n'
+                f'  val targetName = target.head.name\n'
+                f'  // BFS traversal of call graph using recursive method traversal\n'
+                f'  var visited = Set[String]()\n'
+                f'  var toVisit = scala.collection.mutable.Queue[io.shiftleft.codepropertygraph.generated.nodes.Method]()\n'
+                f'  toVisit.enqueue(source.head)\n'
+                f'  var found = false\n'
+                f'  \n'
+                f'  while (toVisit.nonEmpty && !found) {{\n'
+                f'    val current = toVisit.dequeue()\n'
+                f'    val currentName = current.name\n'
+                f'    if (!visited.contains(currentName)) {{\n'
+                f'      visited = visited + currentName\n'
+                f'      val callees = current.call.callee.l\n'
+                f'      for (callee <- callees) {{\n'
+                f'        val calleeName = callee.name\n'
+                f'        if (calleeName == targetName) {{\n'
+                f'          found = true\n'
+                f'        }} else if (!visited.contains(calleeName) && !calleeName.startsWith("<operator>")) {{\n'
+                f'          toVisit.enqueue(callee)\n'
                 f'        }}\n'
                 f'      }}\n'
                 f'    }}\n'
                 f'  }}\n'
+                f'  found\n'
                 f'}} else false\n'
                 f'List(reachable).toJsonPretty'
             )
