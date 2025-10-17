@@ -1602,36 +1602,86 @@ def register_tools(mcp, services: dict):
             await session_manager.touch_session(session_id)
 
             # Build query based on direction
+            method_escaped = re.escape(method_name)
+            
             if direction == "outgoing":
-                # Methods that the target method calls
-                # Filter out operators (<operator>.*) to reduce noise
-                method_escaped = re.escape(method_name)
-                if depth == 1:
-                    query = f'cpg.method.name("{method_escaped}").call.nameNot("<operator>.*").map(c => (c.method.name, c.name, 1))'
-                elif depth == 2:
-                    # Simpler depth 2: get direct calls, then calls from those methods
-                    query = (
-                        f'val method = cpg.method.name("{method_escaped}").l\n'
-                        f'val depth1 = method.flatMap(_.call.nameNot("<operator>.*")).l\n'
-                        f'val depth1Results = depth1.map(c => (c.method.name, c.name, 1)).l\n'
-                        f'val depth2Results = depth1.flatMap(c => c.callee.flatMap(_.call.nameNot("<operator>.*")).map(c2 => (c.name, c2.name, 2))).l\n'
-                        f'(depth1Results ++ depth2Results).toJsonPretty'
-                    )
-                else:  # depth == 3
-                    query = (
-                        f'val method = cpg.method.name("{method_escaped}").l\n'
-                        f'val depth1 = method.flatMap(_.call.nameNot("<operator>.*")).l\n'
-                        f'val depth1Results = depth1.map(c => (c.method.name, c.name, 1)).l\n'
-                        f'val depth2 = depth1.flatMap(c => c.callee.flatMap(_.call.nameNot("<operator>.*"))).l\n'
-                        f'val depth2Results = depth2.map(c => (c.method.name, c.name, 2)).l\n'
-                        f'val depth3Results = depth2.flatMap(c => c.callee.flatMap(_.call.nameNot("<operator>.*")).map(c2 => (c.name, c2.name, 3))).l\n'
-                        f'(depth1Results ++ depth2Results ++ depth3Results).toJsonPretty'
-                    )
+                # Use depth-independent BFS traversal for call graph expansion
+                # Traverse caller -> calls -> callee for arbitrary depth
+                query = (
+                    f'val rootMethod = cpg.method.name("{method_escaped}").l\n'
+                    f'if (rootMethod.nonEmpty) {{\n'
+                    f'  val rootName = rootMethod.head.name\n'
+                    f'  var allCalls = scala.collection.mutable.ListBuffer[(String, String, Int)]()\n'
+                    f'  var toVisit = scala.collection.mutable.Queue[(io.shiftleft.codepropertygraph.generated.nodes.Method, Int)]()\n'
+                    f'  var visited = Set[String]()\n'
+                    f'  \n'
+                    f'  toVisit.enqueue((rootMethod.head, 0))\n'
+                    f'  \n'
+                    f'  while (toVisit.nonEmpty) {{\n'
+                    f'    val (current, currentDepth) = toVisit.dequeue()\n'
+                    f'    val currentName = current.name\n'
+                    f'    \n'
+                    f'    if (!visited.contains(currentName) && currentDepth < {depth}) {{\n'
+                    f'      visited = visited + currentName\n'
+                    f'      val callees = current.call.callee.l\n'
+                    f'      \n'
+                    f'      for (callee <- callees) {{\n'
+                    f'        val calleeName = callee.name\n'
+                    f'        if (!calleeName.startsWith("<operator>")) {{\n'
+                    f'          allCalls += ((currentName, calleeName, currentDepth + 1))\n'
+                    f'          if (!visited.contains(calleeName)) {{\n'
+                    f'            toVisit.enqueue((callee, currentDepth + 1))\n'
+                    f'          }}\n'
+                    f'        }}\n'
+                    f'      }}\n'
+                    f'    }}\n'
+                    f'  }}\n'
+                    f'  \n'
+                    f'  allCalls.toList.map(t => (t._1, t._2, t._3)).toJsonPretty\n'
+                    f'}} else List[(String, String, Int)]().toJsonPretty'
+                )
             else:  # incoming
-                # Methods that call the target method
-                # Return (caller_name, target_name, depth)
-                method_escaped = re.escape(method_name)
-                query = f'cpg.method.name("{method_escaped}").caller.map(m => (m.name, "{method_escaped}", 1))'
+                # For incoming calls, find all methods that call the target using BFS
+                # This finds methods that call the target at any depth
+                query = (
+                    f'val targetMethod = cpg.method.name("{method_escaped}").l\n'
+                    f'if (targetMethod.nonEmpty) {{\n'
+                    f'  val targetName = targetMethod.head.name\n'
+                    f'  var allCallers = scala.collection.mutable.ListBuffer[(String, String, Int)]()\n'
+                    f'  var toVisit = scala.collection.mutable.Queue[(io.shiftleft.codepropertygraph.generated.nodes.Method, Int)]()\n'
+                    f'  var visited = Set[String]()\n'
+                    f'  \n'
+                    f'  // Start with direct callers\n'
+                    f'  val directCallers = targetMethod.head.caller.l\n'
+                    f'  for (caller <- directCallers) {{\n'
+                    f'    allCallers += ((caller.name, targetName, 1))\n'
+                    f'    toVisit.enqueue((caller, 1))\n'
+                    f'  }}\n'
+                    f'  \n'
+                    f'  // BFS to find indirect callers\n'
+                    f'  while (toVisit.nonEmpty) {{\n'
+                    f'    val (current, currentDepth) = toVisit.dequeue()\n'
+                    f'    val currentName = current.name\n'
+                    f'    \n'
+                    f'    if (!visited.contains(currentName) && currentDepth < {depth}) {{\n'
+                    f'      visited = visited + currentName\n'
+                    f'      val incomingCallers = current.caller.l\n'
+                    f'      \n'
+                    f'      for (caller <- incomingCallers) {{\n'
+                    f'        val callerName = caller.name\n'
+                    f'        if (!callerName.startsWith("<operator>")) {{\n'
+                    f'          allCallers += ((callerName, targetName, currentDepth + 1))\n'
+                    f'          if (!visited.contains(callerName)) {{\n'
+                    f'            toVisit.enqueue((caller, currentDepth + 1))\n'
+                    f'          }}\n'
+                    f'        }}\n'
+                    f'      }}\n'
+                    f'    }}\n'
+                    f'  }}\n'
+                    f'  \n'
+                    f'  allCallers.toList.map(t => (t._1, t._2, t._3)).toJsonPretty\n'
+                    f'}} else List[(String, String, Int)]().toJsonPretty'
+                )
 
             result = await query_executor.execute_query(
                 session_id=session_id,
