@@ -2508,16 +2508,15 @@ def register_tools(mcp, services: dict):
     @mcp.tool()
     async def get_program_slice(
         session_id: str,
-        filename: str,
-        line_number: int,
-        call_name: Optional[str] = None,
+        node_id: Optional[str] = None,
+        location: Optional[str] = None,
         include_dataflow: bool = True,
         include_control_flow: bool = True,
         max_depth: int = 5,
         timeout: int = 60,
     ) -> Dict[str, Any]:
         """
-        Build a program slice from a specific line or call.
+        Build a program slice from a specific call node.
 
         Creates a backward program slice showing all code that could affect the
         execution at a specific point. This includes:
@@ -2526,12 +2525,16 @@ def register_tools(mcp, services: dict):
         - Control flow: conditions that determine whether the call executes
         - Call graph: functions called and their data dependencies
 
+        **Important**: Use node IDs (from list_calls) or specify exact locations to
+        avoid ambiguity, especially when multiple calls appear on the same line.
+
         Args:
             session_id: The session ID from create_cpg_session
-            filename: Source file containing the line of interest
-            line_number: Line number of the call/statement to slice from
-            call_name: Optional: specific call name to slice (e.g., "memcpy", "strcpy")
-                If not provided, slices all calls on that line
+            node_id: Preferred: Direct CPG node ID of the target call
+                (Get from list_calls or other query results)
+                Example: "12345"
+            location: Alternative: "filename:line_number" or "filename:line_number:call_name"
+                Example: "main.c:42" or "main.c:42:memcpy"
             include_dataflow: Include dataflow (variable assignments) in slice (default: true)
             include_control_flow: Include control dependencies (if/while conditions) (default: true)
             max_depth: Maximum depth for dataflow tracking (default: 5)
@@ -2542,31 +2545,30 @@ def register_tools(mcp, services: dict):
                 "success": true,
                 "slice": {
                     "target_call": {
+                        "node_id": "12345",
                         "name": "memcpy",
                         "code": "memcpy(buf, src, size)",
                         "filename": "main.c",
                         "lineNumber": 42,
+                        "method": "process_data",
                         "arguments": ["buf", "src", "size"]
                     },
                     "dataflow": [
                         {
                             "variable": "buf",
-                            "definition": "char buf[256]",
+                            "code": "char buf[256]",
                             "filename": "main.c",
                             "lineNumber": 10,
-                            "dependencies": [...]
+                            "method": "process_data"
                         }
                     ],
                     "control_dependencies": [
                         {
-                            "condition": "if (user_input != NULL)",
+                            "code": "if (user_input != NULL)",
                             "filename": "main.c",
-                            "lineNumber": 35
+                            "lineNumber": 35,
+                            "method": "process_data"
                         }
-                    ],
-                    "call_graph": [
-                        {"from": "main", "to": "memcpy", "depth": 1},
-                        {"from": "memcpy", "to": "__memcpy", "depth": 2}
                     ]
                 },
                 "total_nodes": 15
@@ -2574,6 +2576,10 @@ def register_tools(mcp, services: dict):
         """
         try:
             validate_session_id(session_id)
+
+            # Validate that we have proper node identification
+            if not node_id and not location:
+                raise ValidationError("Either node_id or location must be provided")
 
             session_manager = services["session_manager"]
             query_executor = services["query_executor"]
@@ -2587,159 +2593,138 @@ def register_tools(mcp, services: dict):
 
             await session_manager.touch_session(session_id)
 
-            # Step 1: Find the target call(s) at the specified location
-            call_filter = f'.name("{call_name}")' if call_name else ""
-            target_query = (
-                f'cpg.call{call_filter}'
-                f'.where(_.file.name(".*{re.escape(filename)}.*"))'
-                f'.lineNumber({line_number})'
-                f'.map(c => (c.name, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), '
-                f'c.argument.l.map(_.code), c.method.name))'
-            )
-
-            target_result = await query_executor.execute_query(
+            # Step 1: Resolve target call node
+            target_call = None
+            
+            if node_id:
+                # Direct node ID lookup - most efficient and unambiguous
+                query = (
+                    f'cpg.id({node_id}).map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), '
+                    f'c.lineNumber.getOrElse(-1), c.method.name, c.argument.code.l)).headOption'
+                )
+            else:
+                # Parse location string to find call
+                parts = location.split(":")
+                if len(parts) < 2:
+                    raise ValidationError("location must be in format 'filename:line' or 'filename:line:callname'")
+                
+                filename = parts[0]
+                line_num = parts[1]
+                call_name = parts[2] if len(parts) > 2 else None
+                
+                # Build query to find call at location
+                if call_name:
+                    query = (
+                        f'cpg.file.name(".*{re.escape(filename)}.*").call.name("{call_name}").lineNumber({line_num})'
+                        f'.map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), '
+                        f'c.lineNumber.getOrElse(-1), c.method.name, c.argument.code.l)).headOption'
+                    )
+                else:
+                    query = (
+                        f'cpg.file.name(".*{re.escape(filename)}.*").call.lineNumber({line_num})'
+                        f'.map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), '
+                        f'c.lineNumber.getOrElse(-1), c.method.name, c.argument.code.l)).headOption'
+                    )
+            
+            result = await query_executor.execute_query(
                 session_id=session_id,
                 cpg_path="/workspace/cpg.bin",
-                query=target_query,
-                timeout=30,
-                limit=10,
+                query=query,
+                timeout=10,
+                limit=1,
             )
 
-            if not target_result.success or not target_result.data:
+            if not result.success or not result.data or not result.data[0].get("_1"):
                 return {
                     "success": False,
                     "error": {
                         "code": "NOT_FOUND",
-                        "message": f"No call found at {filename}:{line_number}"
+                        "message": f"Call not found: node_id={node_id}, location={location}"
                     },
                 }
 
-            # Parse target call information
-            target_item = target_result.data[0]
-            if not isinstance(target_item, dict):
-                return {
-                    "success": False,
-                    "error": {"code": "PARSE_ERROR", "message": "Invalid target call data"},
-                }
-
+            item = result.data[0]
             target_call = {
-                "name": target_item.get("_1", ""),
-                "code": target_item.get("_2", ""),
-                "filename": target_item.get("_3", ""),
-                "lineNumber": target_item.get("_4", -1),
-                "arguments": target_item.get("_5", []),
-                "method": target_item.get("_6", ""),
+                "node_id": item.get("_1"),
+                "name": item.get("_2", ""),
+                "code": item.get("_3", ""),
+                "filename": item.get("_4", ""),
+                "lineNumber": item.get("_5", -1),
+                "method": item.get("_6", ""),
+                "arguments": item.get("_7", []),
             }
 
             slice_result = {
                 "target_call": target_call,
                 "dataflow": [],
                 "control_dependencies": [],
-                "call_graph": [],
             }
 
             # Step 2: Get dataflow for arguments
             if include_dataflow and target_call["arguments"]:
-                # Build query to track dataflow for each argument using reachableByFlows
                 for arg in target_call["arguments"]:
-                    # Clean up argument (remove operators, casts, etc)
-                    clean_arg = arg.strip()
-                    if not clean_arg or clean_arg.isdigit() or clean_arg.startswith('"'):
-                        continue  # Skip literals
+                    # Clean up argument
+                    clean_arg = arg.strip().replace("\"", "")
+                    if not clean_arg or clean_arg.isdigit() or clean_arg.startswith("(") or clean_arg.startswith("0x"):
+                        continue
 
-                    # Query for dataflow using reachableByFlows from identifiers to the call argument
+                    # Find identifiers with this name and their definitions
                     dataflow_query = (
-                        f'val sources = cpg.identifier.name("{re.escape(clean_arg)}").l\n'
-                        f'val sink = cpg.call.where(_.file.name(".*{re.escape(filename)}.*"))'
-                        f'.lineNumber({line_number})'
-                        f'.argument.code(".*{re.escape(clean_arg)}.*").l\n'
-                        f'if (sources.nonEmpty && sink.nonEmpty) {{\n'
-                        f'  sink.reachableByFlows(sources).map(flow => {{\n'
-                        f'    val elems = flow.elements\n'
-                        f'    elems.take(15).map(e => (e.code, e.file.name.headOption.getOrElse("unknown"), '
-                        f'e.lineNumber.getOrElse(-1), e.method.name))\n'
-                        f'  }}).take({max_depth}).l.flatten\n'
-                        f'}} else List()'
+                        f'cpg.identifier.name("{re.escape(clean_arg)}").l.take(10).map(id => '
+                        f'(id.code, id.file.name.headOption.getOrElse("unknown"), '
+                        f'id.lineNumber.getOrElse(-1), id.method.name))'
                     )
 
                     dataflow_result = await query_executor.execute_query(
                         session_id=session_id,
                         cpg_path="/workspace/cpg.bin",
                         query=dataflow_query,
-                        timeout=20,
-                        limit=50,
+                        timeout=15,
+                        limit=20,
                     )
 
                     if dataflow_result.success and dataflow_result.data:
-                        for item in dataflow_result.data:
-                            if isinstance(item, dict):
+                        for dflow_item in dataflow_result.data[:5]:  # Limit to 5 per argument
+                            if isinstance(dflow_item, dict):
                                 slice_result["dataflow"].append({
                                     "variable": clean_arg,
-                                    "definition": item.get("_1", ""),
-                                    "filename": item.get("_2", ""),
-                                    "lineNumber": item.get("_3", -1),
-                                    "method": item.get("_4", ""),
+                                    "code": dflow_item.get("_1", ""),
+                                    "filename": dflow_item.get("_2", ""),
+                                    "lineNumber": dflow_item.get("_3", -1),
+                                    "method": dflow_item.get("_4", ""),
                                 })
 
             # Step 3: Get control dependencies
             if include_control_flow:
-                # Query for control dependencies using controlledBy
+                # Query using node ID for precise control dependency lookup
                 control_query = (
-                    f'cpg.call.where(_.file.name(".*{re.escape(filename)}.*"))'
-                    f'.lineNumber({line_number})'
-                    f'.controlledBy'
-                    f'.map(n => (n.code, n.file.name.headOption.getOrElse("unknown"), n.lineNumber.getOrElse(-1)))'
-                    f'.dedup.take(20)'
+                    f'cpg.id({target_call["node_id"]}).controlledBy.map(ctrl => '
+                    f'(ctrl.code, ctrl.file.name.headOption.getOrElse("unknown"), '
+                    f'ctrl.lineNumber.getOrElse(-1), ctrl.method.name)).dedup.take(20)'
                 )
 
                 control_result = await query_executor.execute_query(
                     session_id=session_id,
                     cpg_path="/workspace/cpg.bin",
                     query=control_query,
-                    timeout=20,
+                    timeout=15,
                     limit=20,
                 )
 
                 if control_result.success and control_result.data:
-                    for item in control_result.data:
-                        if isinstance(item, dict):
+                    for ctrl_item in control_result.data:
+                        if isinstance(ctrl_item, dict):
                             slice_result["control_dependencies"].append({
-                                "condition": item.get("_1", ""),
-                                "filename": item.get("_2", ""),
-                                "lineNumber": item.get("_3", -1),
-                            })
-
-            # Step 4: Get call graph (outgoing calls from the target call's method)
-            if target_call["method"]:
-                callgraph_query = (
-                    f'cpg.method.name("{target_call["method"]}")'
-                    f'.call.nameNot("<operator>.*")'
-                    f'.map(c => ("{target_call["method"]}", c.name, 1))'
-                    f'.dedup.take(30)'
-                )
-
-                callgraph_result = await query_executor.execute_query(
-                    session_id=session_id,
-                    cpg_path="/workspace/cpg.bin",
-                    query=callgraph_query,
-                    timeout=20,
-                    limit=30,
-                )
-
-                if callgraph_result.success and callgraph_result.data:
-                    for item in callgraph_result.data:
-                        if isinstance(item, dict):
-                            slice_result["call_graph"].append({
-                                "from": item.get("_1", ""),
-                                "to": item.get("_2", ""),
-                                "depth": item.get("_3", 1),
+                                "code": ctrl_item.get("_1", ""),
+                                "filename": ctrl_item.get("_2", ""),
+                                "lineNumber": ctrl_item.get("_3", -1),
+                                "method": ctrl_item.get("_4", ""),
                             })
 
             total_nodes = (
                 1 +  # target call
                 len(slice_result["dataflow"]) +
-                len(slice_result["control_dependencies"]) +
-                len(slice_result["call_graph"])
+                len(slice_result["control_dependencies"])
             )
 
             return {
