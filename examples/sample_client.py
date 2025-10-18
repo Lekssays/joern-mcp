@@ -88,43 +88,52 @@ async def demonstrate_joern_mcp():
             logger.error("❌ Timeout waiting for CPG")
             return
         
-        # 5. Run synchronous CPGQL queries
-        logger.info("\n🔍 Running synchronous queries...")
-        queries = [
-            "cpg.method.name",
-            "cpg.call.name", 
-            "cpg.file.name"
-        ]
+        # 5.5. Test node_id query directly
+        logger.info("\n🔍 Testing node_id query directly...")
+        test_result = await client.call_tool("run_cpgql_query", {
+            "session_id": session_id,
+            "query": "cpg.method.take(3).map(m => (m.id, m.name)).l",
+            "timeout": 30
+        })
         
-        for query in queries:
-            result = await client.call_tool("run_cpgql_query", {
-                "session_id": session_id,
-                "query": query,
-                "timeout": 30
-            })
-            
-            result_dict = extract_tool_result(result)
-            
-            if result_dict.get("success"):
-                count = result_dict.get("row_count", 0)
-                time_taken = result_dict.get("execution_time", 0)
-                logger.info(f"  ✅ {query}: {count} results in {time_taken:.2f}s")
-                
-                # Show sample data
-                if result_dict.get("data") and len(result_dict["data"]) > 0:
-                    data = result_dict["data"]
-                    logger.info(f"     First 5 results:")
-                    for i, item in enumerate(data[:5]):
-                        if isinstance(item, dict) and "value" in item:
-                            logger.info(f"       {i+1}. {item['value']}")
-                        else:
-                            logger.info(f"       {i+1}. {str(item)[:80]}...")
-                    if count > 5:
-                        logger.info(f"       ... and {count - 5} more")
-            else:
-                logger.error(f"  ❌ {query}: {result_dict.get('error')}")
+        test_dict = extract_tool_result(test_result)
         
-        # 6. Run asynchronous query
+        if test_dict.get("success"):
+            logger.info("  ✅ Direct query successful")
+            if test_dict.get("data"):
+                logger.info(f"     Raw data: {test_dict['data'][:3]}")
+        else:
+            logger.error(f"  ❌ Direct query failed: {test_dict.get('error')}")
+        
+        # 5.6. List methods using the dedicated tool
+        logger.info("\n� Listing methods using list_methods tool...")
+        methods_result = await client.call_tool("list_methods", {
+            "session_id": session_id,
+            "limit": 10
+        })
+        
+        methods_dict = extract_tool_result(methods_result)
+        
+        if methods_dict.get("success"):
+            total_methods = methods_dict.get("total", 0)
+            logger.info(f"  ✅ Found {total_methods} methods")
+            
+            # Show sample methods with node_id
+            if methods_dict.get("methods") and len(methods_dict["methods"]) > 0:
+                methods = methods_dict["methods"]
+                logger.info("     Sample methods:")
+                for i, method in enumerate(methods[:5]):
+                    node_id = method.get("node_id", "N/A")
+                    name = method.get("name", "N/A")
+                    filename = method.get("filename", "N/A")
+                    line = method.get("lineNumber", "N/A")
+                    logger.info(f"       {i+1}. [{node_id}] {name} in {filename}:{line}")
+                if total_methods > 5:
+                    logger.info(f"       ... and {total_methods - 5} more methods")
+        else:
+            logger.error(f"  ❌ Failed to list methods: {methods_dict.get('error')}")
+        
+        # 6. Run asynchronous CPGQL queries
         logger.info("\n⚡ Running asynchronous query...")
         async_result = await client.call_tool("run_cpgql_query_async", {
             "session_id": session_id,

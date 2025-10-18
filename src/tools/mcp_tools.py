@@ -1199,12 +1199,8 @@ def register_tools(mcp, services: dict):
                 "success": true,
                 "methods": [
                     {
+                        "node_id": "12345",
                         "name": "main",
-                        "fullName": "main",
-                        "signature": "int main(int, char**)",
-                        "filename": "main.c",
-                        "lineNumber": 10,
-                        "isExternal": false
                     }
                 ],
                 "total": 1
@@ -1241,10 +1237,12 @@ def register_tools(mcp, services: dict):
                 query_parts.append(f'.where(_.callOut.name("{callee_pattern}"))')
 
             query_parts.append(
-                ".map(m => (m.name, m.fullName, m.signature, m.filename, m.lineNumber.getOrElse(-1), m.isExternal))"
+                ".map(m => (m.name, m.id, m.fullName, m.signature, m.filename, m.lineNumber.getOrElse(-1), m.isExternal))"
             )
 
             query = "".join(query_parts) + f".dedup.take({limit}).l"
+
+            logger.info(f"list_methods query: {query}")
 
             result = await query_executor.execute_query(
                 session_id=session_id,
@@ -1261,16 +1259,19 @@ def register_tools(mcp, services: dict):
                 }
 
             methods = []
+            logger.info(f"Raw result data: {result.data[:3]}")  # Debug logging
             for item in result.data:
+                logger.info(f"Processing item: {item}, type: {type(item)}")  # Debug logging
                 if isinstance(item, dict):
                     methods.append(
                         {
+                            "node_id": str(item.get("_2", "")),
                             "name": item.get("_1", ""),
-                            "fullName": item.get("_2", ""),
-                            "signature": item.get("_3", ""),
-                            "filename": item.get("_4", ""),
-                            "lineNumber": item.get("_5", -1),
-                            "isExternal": item.get("_6", False),
+                            "fullName": item.get("_3", ""),
+                            "signature": item.get("_4", ""),
+                            "filename": item.get("_5", ""),
+                            "lineNumber": item.get("_6", -1),
+                            "isExternal": item.get("_7", False),
                         }
                     )
 

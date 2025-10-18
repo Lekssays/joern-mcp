@@ -430,11 +430,13 @@ class TestMCPTools:
         query_result = QueryResult(
             success=True,
             data=[{
-                "_1": "main",
-                "_2": "int main(int, char**)",
-                "_3": "main.c",
-                "_4": 10,
-                "_5": False
+                "_1": "12345",
+                "_2": "main",
+                "_3": "main",
+                "_4": "int main(int, char**)",
+                "_5": "main.c",
+                "_6": 10,
+                "_7": False
             }],
             row_count=1
         )
@@ -445,6 +447,7 @@ class TestMCPTools:
 
         assert result["success"] is True
         assert len(result["methods"]) == 1
+        assert result["methods"][0]["node_id"] == "12345"
         assert result["methods"][0]["name"] == "main"
 
     @pytest.mark.asyncio
