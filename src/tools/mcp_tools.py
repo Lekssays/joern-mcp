@@ -2227,8 +2227,13 @@ def register_tools(mcp, services: dict):
             # Resolve source to actual node
             source_info = None
             if source_node_id:
-                # Direct node ID lookup
-                query = f'cpg.id({source_node_id}).map(n => (n.id, n.code, n.file.name.headOption.getOrElse("unknown"), n.lineNumber.getOrElse(-1), Try(n.method.fullName).getOrElse("unknown"))).headOption'
+                # Direct node ID lookup - must convert string to Long and use cpg.call.id()
+                try:
+                    node_id_long = int(source_node_id)
+                except ValueError:
+                    raise ValidationError(f"source_node_id must be a valid integer: {source_node_id}")
+                    
+                query = f'cpg.call.id({node_id_long}L).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
             else:
                 # Parse location: "filename:line_number" or "filename:line_number:method_name"
                 parts = source_location.split(":")
@@ -2236,13 +2241,17 @@ def register_tools(mcp, services: dict):
                     raise ValidationError("source_location must be in format 'filename:line' or 'filename:line:method'")
                 
                 filename = parts[0]
-                line_num = parts[1]
+                try:
+                    line_num = int(parts[1])
+                except ValueError:
+                    raise ValidationError(f"Line number must be a valid integer: {parts[1]}")
                 method_name = parts[2] if len(parts) > 2 else None
                 
+                # Use proper traversal syntax: cpg.call.where(_.file.name(...))
                 if method_name:
-                    query = f'cpg.file.name("{filename}").call.lineNumber({line_num}).where(_.method.fullName.contains("{method_name}")).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).headOption'
+                    query = f'cpg.call.where(_.file.name(".*{filename}$")).lineNumber({line_num}).filter(_.method.fullName.contains("{method_name}")).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
                 else:
-                    query = f'cpg.file.name("{filename}").call.lineNumber({line_num}).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).headOption'
+                    query = f'cpg.call.where(_.file.name(".*{filename}$")).lineNumber({line_num}).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
             
             result_src = await query_executor.execute_query(
                 session_id=session_id,
@@ -2266,8 +2275,13 @@ def register_tools(mcp, services: dict):
             # Resolve sink to actual node
             sink_info = None
             if sink_node_id:
-                # Direct node ID lookup
-                query = f'cpg.id({sink_node_id}).map(n => (n.id, n.code, n.file.name.headOption.getOrElse("unknown"), n.lineNumber.getOrElse(-1), Try(n.method.fullName).getOrElse("unknown"))).headOption'
+                # Direct node ID lookup - must convert string to Long and use cpg.call.id()
+                try:
+                    node_id_long = int(sink_node_id)
+                except ValueError:
+                    raise ValidationError(f"sink_node_id must be a valid integer: {sink_node_id}")
+                    
+                query = f'cpg.call.id({node_id_long}L).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
             else:
                 # Parse location: "filename:line_number" or "filename:line_number:method_name"
                 parts = sink_location.split(":")
@@ -2275,13 +2289,17 @@ def register_tools(mcp, services: dict):
                     raise ValidationError("sink_location must be in format 'filename:line' or 'filename:line:method'")
                 
                 filename = parts[0]
-                line_num = parts[1]
+                try:
+                    line_num = int(parts[1])
+                except ValueError:
+                    raise ValidationError(f"Line number must be a valid integer: {parts[1]}")
                 method_name = parts[2] if len(parts) > 2 else None
                 
+                # Use proper traversal syntax: cpg.call.where(_.file.name(...))
                 if method_name:
-                    query = f'cpg.file.name("{filename}").call.lineNumber({line_num}).where(_.method.fullName.contains("{method_name}")).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).headOption'
+                    query = f'cpg.call.where(_.file.name(".*{filename}$")).lineNumber({line_num}).filter(_.method.fullName.contains("{method_name}")).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
                 else:
-                    query = f'cpg.file.name("{filename}").call.lineNumber({line_num}).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).headOption'
+                    query = f'cpg.call.where(_.file.name(".*{filename}$")).lineNumber({line_num}).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
             
             result_snk = await query_executor.execute_query(
                 session_id=session_id,
@@ -2305,7 +2323,7 @@ def register_tools(mcp, services: dict):
             # If either source or sink not found, return early
             if not source_info or not sink_info:
                 return {
-                    "success": True,
+                    "success": False,
                     "source": source_info,
                     "sink": sink_info,
                     "flows": [],
@@ -2318,15 +2336,24 @@ def register_tools(mcp, services: dict):
             source_id = source_info["node_id"]
             sink_id = sink_info["node_id"]
             
+            # Ensure IDs are treated as Longs in the query
+            # Wrap the entire query so it can be piped to JSON properly
             query = (
-                f'val source = cpg.id({source_id}).l\n'
-                f'val sink = cpg.id({sink_id}).l\n'
-                f'if (source.nonEmpty && sink.nonEmpty) {{\n'
-                f'  val flows = sink.reachableByFlows(source).filter(f => f.elements.size <= {max_path_length}).toList\n'
-                f'  flows.zipWithIndex.map {{ case (flow, flowIdx) =>\n'
-                f'    (flowIdx, flow.elements.size, flow.elements.map(e => (e.code, e.file.name.headOption.getOrElse("unknown"), e.lineNumber.getOrElse(-1), e.label)).l)\n'
-                f'  }}\n'
-                f'}} else List[(Int, Int, List[(String, String, Int, String)])]()'
+                f'{{\n'
+                f'  val source = cpg.call.id({source_id}L).l\n'
+                f'  val sink = cpg.call.id({sink_id}L).l\n'
+                f'  if (source.nonEmpty && sink.nonEmpty) {{\n'
+                f'    val flows = sink.reachableByFlows(source).filter(f => f.elements.size <= {max_path_length}).toList\n'
+                f'    flows.zipWithIndex.map {{ case (flow, flowIdx) =>\n'
+                f'      val elements = flow.elements.map(e => {{\n'
+                f'        val fileName = e.file.name.take(1).l.headOption.getOrElse("unknown")\n'
+                f'        val lineNum = e.lineNumber.getOrElse(-1)\n'
+                f'        (e.code, fileName, lineNum, e.label)\n'
+                f'      }}).l\n'
+                f'      (flowIdx, flow.elements.size, elements)\n'
+                f'    }}\n'
+                f'  }} else List[(Int, Int, List[(String, String, Int, String)])]()\n'
+                f'}}.l'
             )
 
             result = await query_executor.execute_query(

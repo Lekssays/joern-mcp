@@ -136,3 +136,4 @@ build.log
 playground/codebases/*
 !playground/codebases/core/
 joern-docs.md
+test_scripts/
