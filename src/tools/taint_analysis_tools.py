@@ -1126,3 +1126,265 @@ def register_taint_analysis_tools(mcp, services: dict):
                 "success": False,
                 "error": {"code": "INTERNAL_ERROR", "message": str(e)},
             }
+
+    @mcp.tool()
+    async def get_data_dependencies(
+        session_id: str,
+        location: str,
+        variable: str,
+        direction: str = "backward",
+    ) -> Dict[str, Any]:
+        """
+        Analyze data dependencies for a variable at a specific location.
+
+        Find all code locations that influence (backward) or are influenced by (forward)
+        a variable at a specific line of code. Critical for understanding what values
+        can affect a potentially vulnerable operation or where tainted data can flow.
+
+        Args:
+            session_id: The session ID from create_cpg_session
+            location: Location in format "filename:line" (e.g., "parser.c:3393")
+            variable: Name of the variable to analyze (e.g., "len", "buffer")
+            direction: Analysis direction - "backward" (default) or "forward"
+                - "backward": Find what affects this variable (definitions, assignments)
+                - "forward": Find what uses this variable (usages, propagations)
+
+        Returns:
+            {
+                "success": true,
+                "target": {
+                    "file": "parser.c",
+                    "line": 3393,
+                    "variable": "len",
+                    "method": "xmlParseNmtoken"
+                },
+                "direction": "backward",
+                "dependencies": [
+                    {"line": 3383, "code": "int len = 0", "type": "initialization", "filename": "parser.c"},
+                    {"line": 3393, "code": "len++", "type": "modification", "filename": "parser.c"},
+                    {"line": 3393, "code": "len += xmlCopyCharMultiByte(...)", "type": "modification", "filename": "parser.c"}
+                ],
+                "total": 3
+            }
+
+        Dependency Types (backward):
+            - initialization: Variable declaration/initialization
+            - assignment: Direct assignments to the variable
+            - modification: Increments, decrements, compound assignments (+=, -=, etc.)
+            - function_call: Function calls that may modify the variable (pass by reference)
+
+        Dependency Types (forward):
+            - usage: Where the variable is used as a function argument
+            - propagation: Assignments where the variable appears on the right-hand side
+
+        Example - Backward Analysis (find what sets a variable):
+            get_data_dependencies(
+                session_id="abc-123",
+                location="parser.c:3393",  # The COPY_BUF call
+                variable="len",
+                direction="backward"
+            )
+            # Returns all assignments, modifications, and initializations of 'len'
+            # before line 3393
+
+        Example - Forward Analysis (find what uses a variable):
+            get_data_dependencies(
+                session_id="abc-123",
+                location="parser.c:3383",  # Where len is initialized
+                variable="len",
+                direction="forward"
+            )
+            # Returns all usages and propagations of 'len' after line 3383
+        """
+        try:
+            validate_session_id(session_id)
+
+            # Validate location format
+            if ":" not in location:
+                raise ValidationError("location must be in format 'filename:line'")
+
+            parts = location.rsplit(":", 1)
+            if len(parts) != 2:
+                raise ValidationError("location must be in format 'filename:line'")
+
+            filename = parts[0]
+            try:
+                line_num = int(parts[1])
+            except ValueError:
+                raise ValidationError(f"Invalid line number: {parts[1]}")
+
+            # Validate direction
+            if direction not in ["backward", "forward"]:
+                raise ValidationError("direction must be 'backward' or 'forward'")
+
+            session_manager = services["session_manager"]
+            query_executor = services["query_executor"]
+
+            session = await session_manager.get_session(session_id)
+            if not session:
+                raise SessionNotFoundError(f"Session {session_id} not found")
+
+            if session.status != SessionStatus.READY.value:
+                raise SessionNotReadyError(f"Session is in '{session.status}' status")
+
+            await session_manager.touch_session(session_id)
+
+            # Build inline Scala query (like find_bounds_checks)
+            # Wrap in braces to avoid REPL line-by-line interpretation issues
+            query_template = r"""{
+def escapeJson(s: String): String = {
+  s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+}
+
+val targetLine = LINE_NUM_PLACEHOLDER
+val varName = "VARIABLE_PLACEHOLDER"
+val direction = "DIRECTION_PLACEHOLDER"
+
+val targetMethodOpt = cpg.method.filter(m => {
+  val filename = m.file.name.headOption.getOrElse("")
+  (filename.endsWith("/FILENAME_PLACEHOLDER") || filename == "FILENAME_PLACEHOLDER")
+}).filter(m => {
+  val start = m.lineNumber.getOrElse(-1)
+  val end = m.lineNumberEnd.getOrElse(-1)
+  start <= targetLine && end >= targetLine
+}).headOption
+
+targetMethodOpt match {
+  case Some(method) =>
+    val dependencies = scala.collection.mutable.ListBuffer[String]()
+    
+    if (direction == "backward") {
+      val inits = method.local.name(varName).map { local =>
+        "{\"line\":" + local.lineNumber.getOrElse(-1) + ",\"code\":\"" + escapeJson(local.typeFullName + " " + local.code) + "\",\"type\":\"initialization\",\"filename\":\"" + escapeJson(local.file.name.headOption.getOrElse("unknown")) + "\"}"
+      }.l
+      dependencies ++= inits
+      
+      val assignments = method.assignment.l.filter(assign => {
+        val line = assign.lineNumber.getOrElse(-1)
+        if (line >= targetLine) false
+        else {
+          val targetCode = assign.target.code
+          targetCode == varName || targetCode.startsWith(varName + "[") || targetCode.startsWith(varName + ".")
+        }
+      }).map { assign =>
+        "{\"line\":" + assign.lineNumber.getOrElse(-1) + ",\"code\":\"" + escapeJson(assign.code) + "\",\"type\":\"assignment\",\"filename\":\"" + escapeJson(assign.file.name.headOption.getOrElse("unknown")) + "\"}"
+      }
+      dependencies ++= assignments
+      
+      val modifications = method.call.name("<operator>.(postIncrement|preIncrement|postDecrement|preDecrement|assignmentPlus|assignmentMinus)").l.filter { call =>
+        val line = call.lineNumber.getOrElse(-1)
+        if (line >= targetLine) false
+        else {
+          val args = call.argument.code.l
+          args.exists(arg => arg == varName || arg.startsWith(varName + "[") || arg.startsWith(varName + "."))
+        }
+      }.map { call =>
+        "{\"line\":" + call.lineNumber.getOrElse(-1) + ",\"code\":\"" + escapeJson(call.code) + "\",\"type\":\"modification\",\"filename\":\"" + escapeJson(call.file.name.headOption.getOrElse("unknown")) + "\"}"
+      }
+      dependencies ++= modifications
+      
+      val callModifications = method.call.l.filter { call =>
+        val line = call.lineNumber.getOrElse(-1)
+        if (line >= targetLine) false
+        else {
+          val args = call.argument.code.l
+          args.exists(arg => arg == "&" + varName || arg == varName)
+        }
+      }.map { call =>
+        "{\"line\":" + call.lineNumber.getOrElse(-1) + ",\"code\":\"" + escapeJson(call.code) + "\",\"type\":\"function_call\",\"filename\":\"" + escapeJson(call.file.name.headOption.getOrElse("unknown")) + "\"}"
+      }
+      dependencies ++= callModifications
+      
+    } else if (direction == "forward") {
+      val usages = method.call.l.filter { call =>
+        val line = call.lineNumber.getOrElse(-1)
+        if (line <= targetLine) false
+        else {
+          val args = call.argument.code.l
+          args.exists(arg => arg.contains(varName))
+        }
+      }.take(20).map { call =>
+        "{\"line\":" + call.lineNumber.getOrElse(-1) + ",\"code\":\"" + escapeJson(call.code) + "\",\"type\":\"usage\",\"filename\":\"" + escapeJson(call.file.name.headOption.getOrElse("unknown")) + "\"}"
+      }
+      dependencies ++= usages
+      
+      val assignmentsFrom = method.assignment.l.filter { assign =>
+        val line = assign.lineNumber.getOrElse(-1)
+        if (line <= targetLine) false
+        else {
+          val sourceCode = assign.source.code
+          sourceCode.contains(varName)
+        }
+      }.map { assign =>
+        "{\"line\":" + assign.lineNumber.getOrElse(-1) + ",\"code\":\"" + escapeJson(assign.code) + "\",\"type\":\"propagation\",\"filename\":\"" + escapeJson(assign.file.name.headOption.getOrElse("unknown")) + "\"}"
+      }
+      dependencies ++= assignmentsFrom
+    }
+    
+    val sortedDeps = dependencies.sortBy(dep => {
+      val linePattern = "\"line\":(\\d+)".r
+      linePattern.findFirstMatchIn(dep).map(_.group(1).toInt).getOrElse(-1)
+    })
+    
+    val depsJson = sortedDeps.mkString(",")
+    
+    "{\"success\":true,\"target\":{\"file\":\"" + escapeJson(method.filename) + "\",\"line\":" + targetLine + ",\"variable\":\"" + varName + "\",\"method\":\"" + escapeJson(method.name) + "\"},\"direction\":\"" + direction + "\",\"dependencies\":[" + depsJson + "],\"total\":" + sortedDeps.size + "}"
+    
+  case None =>
+    "{\"success\":false,\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"No method found containing line LINE_NUM_PLACEHOLDER in file FILENAME_PLACEHOLDER\"}}"
+}
+}"""
+
+            query = (
+                query_template.replace("FILENAME_PLACEHOLDER", filename)
+                .replace("LINE_NUM_PLACEHOLDER", str(line_num))
+                .replace("VARIABLE_PLACEHOLDER", variable)
+                .replace("DIRECTION_PLACEHOLDER", direction)
+            )
+
+            # Execute the query
+            result = await query_executor.execute_query(
+                session_id=session_id,
+                cpg_path="/workspace/cpg.bin",
+                query=query,
+                timeout=60,
+            )
+
+            if not result.success:
+                return {
+                    "success": False,
+                    "error": {"code": "QUERY_ERROR", "message": result.error},
+                }
+
+            # Parse the JSON result (same as find_bounds_checks)
+            import json
+
+            if isinstance(result.data, list) and len(result.data) > 0:
+                result_data = result.data[0]
+
+                # Handle JSON string response
+                if isinstance(result_data, str):
+                    return json.loads(result_data)
+                else:
+                    return result_data
+            else:
+                return {
+                    "success": False,
+                    "error": {
+                        "code": "NO_RESULT",
+                        "message": "Query returned no results",
+                    },
+                }
+
+        except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
+            logger.error(f"Error getting data dependencies: {e}")
+            return {
+                "success": False,
+                "error": {"code": type(e).__name__.upper(), "message": str(e)},
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": {"code": "INTERNAL_ERROR", "message": str(e)},
+            }
