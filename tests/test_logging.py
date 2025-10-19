@@ -1,10 +1,12 @@
 """
 Tests for logging configuration
 """
+
 import logging
 import sys
-from unittest.mock import patch, MagicMock
-from src.utils.logging import setup_logging, get_logger
+from unittest.mock import MagicMock, patch
+
+from src.utils.logging import get_logger, setup_logging
 
 
 class TestSetupLogging:
@@ -12,8 +14,9 @@ class TestSetupLogging:
 
     def test_setup_logging_default_level(self):
         """Test setting up logging with default INFO level"""
-        with patch('logging.getLogger') as mock_get_logger, \
-             patch('sys.stdout', create=True) as mock_stdout:
+        with patch("logging.getLogger") as mock_get_logger, patch(
+            "sys.stdout", create=True
+        ) as mock_stdout:
 
             mock_root_logger = MagicMock()
             mock_docker_logger = MagicMock()
@@ -21,11 +24,11 @@ class TestSetupLogging:
             mock_git_logger = MagicMock()
 
             def get_logger_side_effect(name=None):
-                if name == 'docker':
+                if name == "docker":
                     return mock_docker_logger
-                elif name == 'urllib3':
+                elif name == "urllib3":
                     return mock_urllib_logger
-                elif name == 'git':
+                elif name == "git":
                     return mock_git_logger
                 else:
                     return mock_root_logger
@@ -50,8 +53,9 @@ class TestSetupLogging:
 
     def test_setup_logging_custom_level(self):
         """Test setting up logging with custom log level"""
-        with patch('logging.getLogger') as mock_get_logger, \
-             patch('sys.stdout', create=True) as mock_stdout:
+        with patch("logging.getLogger") as mock_get_logger, patch(
+            "sys.stdout", create=True
+        ) as mock_stdout:
 
             mock_root_logger = MagicMock()
             mock_docker_logger = MagicMock()
@@ -59,11 +63,11 @@ class TestSetupLogging:
             mock_git_logger = MagicMock()
 
             def get_logger_side_effect(name=None):
-                if name == 'docker':
+                if name == "docker":
                     return mock_docker_logger
-                elif name == 'urllib3':
+                elif name == "urllib3":
                     return mock_urllib_logger
-                elif name == 'git':
+                elif name == "git":
                     return mock_git_logger
                 else:
                     return mock_root_logger
@@ -77,8 +81,9 @@ class TestSetupLogging:
 
     def test_setup_logging_invalid_level(self):
         """Test setting up logging with invalid level defaults to INFO"""
-        with patch('logging.getLogger') as mock_get_logger, \
-             patch('sys.stdout', create=True) as mock_stdout:
+        with patch("logging.getLogger") as mock_get_logger, patch(
+            "sys.stdout", create=True
+        ) as mock_stdout:
 
             mock_root_logger = MagicMock()
             mock_docker_logger = MagicMock()
@@ -86,11 +91,11 @@ class TestSetupLogging:
             mock_git_logger = MagicMock()
 
             def get_logger_side_effect(name=None):
-                if name == 'docker':
+                if name == "docker":
                     return mock_docker_logger
-                elif name == 'urllib3':
+                elif name == "urllib3":
                     return mock_urllib_logger
-                elif name == 'git':
+                elif name == "git":
                     return mock_git_logger
                 else:
                     return mock_root_logger
@@ -104,8 +109,9 @@ class TestSetupLogging:
 
     def test_setup_logging_removes_existing_handlers(self):
         """Test that existing handlers are removed before setup"""
-        with patch('logging.getLogger') as mock_get_logger, \
-             patch('sys.stdout', create=True) as mock_stdout:
+        with patch("logging.getLogger") as mock_get_logger, patch(
+            "sys.stdout", create=True
+        ) as mock_stdout:
 
             mock_root_logger = MagicMock()
             mock_root_logger.handlers = [MagicMock(), MagicMock()]  # Existing handlers
@@ -118,8 +124,9 @@ class TestSetupLogging:
 
     def test_setup_logging_library_noise_reduction(self):
         """Test that noisy library loggers are configured"""
-        with patch('logging.getLogger') as mock_get_logger, \
-             patch('sys.stdout', create=True) as mock_stdout:
+        with patch("logging.getLogger") as mock_get_logger, patch(
+            "sys.stdout", create=True
+        ) as mock_stdout:
 
             mock_root_logger = MagicMock()
             mock_docker_logger = MagicMock()
@@ -127,11 +134,11 @@ class TestSetupLogging:
             mock_git_logger = MagicMock()
 
             def get_logger_side_effect(name=None):
-                if name == 'docker':
+                if name == "docker":
                     return mock_docker_logger
-                elif name == 'urllib3':
+                elif name == "urllib3":
                     return mock_urllib_logger
-                elif name == 'git':
+                elif name == "git":
                     return mock_git_logger
                 else:
                     return mock_root_logger
@@ -147,8 +154,9 @@ class TestSetupLogging:
 
     def test_setup_logging_formatter(self):
         """Test that handlers get proper formatter"""
-        with patch('logging.getLogger') as mock_get_logger, \
-             patch('sys.stdout', create=True) as mock_stdout:
+        with patch("logging.getLogger") as mock_get_logger, patch(
+            "sys.stdout", create=True
+        ) as mock_stdout:
 
             mock_root_logger = MagicMock()
             mock_get_logger.return_value = mock_root_logger
@@ -164,12 +172,7 @@ class TestSetupLogging:
 
             # Test the format string
             format_str = handler.formatter._fmt
-            expected_parts = [
-                '%(asctime)s',
-                '%(name)s',
-                '%(levelname)s',
-                '%(message)s'
-            ]
+            expected_parts = ["%(asctime)s", "%(name)s", "%(levelname)s", "%(message)s"]
 
             for part in expected_parts:
                 assert part in format_str
@@ -180,7 +183,7 @@ class TestGetLogger:
 
     def test_get_logger(self):
         """Test getting a logger instance"""
-        with patch('logging.getLogger') as mock_get_logger:
+        with patch("logging.getLogger") as mock_get_logger:
             mock_logger = MagicMock()
             mock_get_logger.return_value = mock_logger
 
@@ -191,7 +194,7 @@ class TestGetLogger:
 
     def test_get_logger_different_names(self):
         """Test getting loggers with different names"""
-        with patch('logging.getLogger') as mock_get_logger:
+        with patch("logging.getLogger") as mock_get_logger:
             mock_logger1 = MagicMock()
             mock_logger2 = MagicMock()
             mock_get_logger.side_effect = [mock_logger1, mock_logger2]

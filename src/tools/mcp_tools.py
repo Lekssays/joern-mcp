@@ -8,24 +8,24 @@ import os
 import re
 import shutil
 import time
-from datetime import datetime, UTC
-from typing import Optional, Dict, Any
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
-from ..models import SessionStatus
 from ..exceptions import (
+    QueryExecutionError,
+    ResourceLimitError,
     SessionNotFoundError,
     SessionNotReadyError,
     ValidationError,
-    ResourceLimitError,
-    QueryExecutionError,
 )
+from ..models import SessionStatus
 from ..utils.validators import (
-    validate_source_type,
-    validate_language,
-    validate_session_id,
-    validate_github_url,
-    validate_local_path,
     validate_cpgql_query,
+    validate_github_url,
+    validate_language,
+    validate_local_path,
+    validate_session_id,
+    validate_source_type,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,8 @@ def get_cpg_cache_key(source_type: str, source_path: str, language: str) -> str:
 
     if source_type == "github":
         # Extract owner/repo from GitHub URL
-        # Handle URLs like: https://github.com/owner/repo or https://github.com/owner/repo.git
+        # Handle URLs like: https://github.com/owner/repo or
+        # https://github.com/owner/repo.git
         if "github.com/" in source_path:
             parts = source_path.split("github.com/")[-1].split("/")
             if len(parts) >= 2:
@@ -94,11 +95,14 @@ def register_tools(mcp, services: dict):
         Args:
             source_type: Either "local" or "github"
             source_path: For local: absolute path to source directory
-                        For github: full GitHub URL (e.g., https://github.com/user/repo)
-            language: Programming language - one of: java, c, cpp, javascript, python, go,
-                        kotlin, csharp, ghidra, jimple, php, ruby, swift
-            github_token: GitHub Personal Access Token for private repositories (optional)
-            branch: Specific git branch to checkout (optional, defaults to default branch)
+                        For github: full GitHub URL
+                        (e.g., https://github.com/user/repo)
+            language: Programming language - one of: java, c, cpp, javascript,
+                        python, go, kotlin, csharp, ghidra, jimple, php, ruby, swift
+            github_token: GitHub Personal Access Token for private repositories
+                        (optional)
+            branch: Specific git branch to checkout
+                    (optional, defaults to default branch)
 
         Returns:
             {
@@ -200,7 +204,8 @@ def register_tools(mcp, services: dict):
                             "/home/", "/host/home/", 1
                         )
                         logger.info(
-                            f"Running in container, translated path: {source_path} -> {container_check_path}"
+                            f"Running in container, translated path: {
+                                source_path} -> {container_check_path}"
                         )
 
                     if not os.path.exists(container_check_path):
@@ -213,7 +218,8 @@ def register_tools(mcp, services: dict):
                         os.makedirs(target_path, exist_ok=True)
 
                         logger.info(
-                            f"Copying local source from {container_check_path} to {target_path}"
+                            f"Copying local source from {
+                                container_check_path} to {target_path}"
                         )
 
                         for item in os.listdir(container_check_path):
@@ -319,7 +325,8 @@ def register_tools(mcp, services: dict):
                         container_source_path = f"/playground/{rel_path}"
 
                         logger.info(
-                            f"Using local source from playground: {source_path} -> {container_source_path}"
+                            f"Using local source from playground: {
+                                source_path} -> {container_source_path}"
                         )
                     else:
                         # Copy to playground/codebases with cache key if not exists
@@ -343,7 +350,8 @@ def register_tools(mcp, services: dict):
                                 "/home/", "/host/home/", 1
                             )
                             logger.info(
-                                f"Running in container, translated path: {source_path} -> {container_check_path}"
+                                f"Running in container, translated path: {
+                                    source_path} -> {container_check_path}"
                             )
 
                         if not os.path.exists(container_check_path):
@@ -361,7 +369,8 @@ def register_tools(mcp, services: dict):
                             os.makedirs(target_path, exist_ok=True)
 
                             logger.info(
-                                f"Copying local source from {container_check_path} to {target_path}"
+                                f"Copying local source from {
+                                    container_check_path} to {target_path}"
                             )
 
                             for item in os.listdir(container_check_path):
@@ -457,7 +466,11 @@ def register_tools(mcp, services: dict):
 
     @mcp.tool()
     async def run_cpgql_query_async(
-        session_id: str, query: str, timeout: int = 30, limit: Optional[int] = 150, offset: Optional[int] = None
+        session_id: str,
+        query: str,
+        timeout: int = 30,
+        limit: Optional[int] = 150,
+        offset: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Executes a CPGQL query asynchronously and returns a query ID for status tracking.
@@ -692,7 +705,11 @@ def register_tools(mcp, services: dict):
 
     @mcp.tool()
     async def run_cpgql_query(
-        session_id: str, query: str, timeout: int = 30, limit: Optional[int] = 150, offset: Optional[int] = None
+        session_id: str,
+        query: str,
+        timeout: int = 30,
+        limit: Optional[int] = 150,
+        offset: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Executes a CPGQL query synchronously on a loaded CPG.
@@ -827,7 +844,7 @@ def register_tools(mcp, services: dict):
             cpg_size = None
             if session.cpg_path and os.path.exists(session.cpg_path):
                 size_bytes = os.path.getsize(session.cpg_path)
-                cpg_size = f"{size_bytes / (1024*1024):.2f}MB"
+                cpg_size = f"{size_bytes / (1024 * 1024):.2f}MB"
 
             return {
                 "session_id": session.id,
@@ -1001,7 +1018,7 @@ def register_tools(mcp, services: dict):
                 if force:
                     should_cleanup = True
                 elif max_age_hours:
-                    age = datetime.now(UTC) - session.last_accessed
+                    age = datetime.now(timezone.utc) - session.last_accessed
                     if age.total_seconds() / 3600 > max_age_hours:
                         should_cleanup = True
 
@@ -1129,7 +1146,8 @@ def register_tools(mcp, services: dict):
                             current_level[part] = {}
                         current_level = current_level[part]
 
-            # Function to truncate large directories (only truncate subfolders, not base level)
+            # Function to truncate large directories (only truncate subfolders, not
+            # base level)
             def truncate_tree(node, is_base_level=True):
                 if isinstance(node, dict):
                     if not is_base_level and len(node) > 20:
@@ -1261,7 +1279,8 @@ def register_tools(mcp, services: dict):
             methods = []
             logger.info(f"Raw result data: {result.data[:3]}")  # Debug logging
             for item in result.data:
-                # Map tuple fields: _1=id, _2=name, _3=fullName, _4=signature, _5=filename, _6=lineNumber, _7=isExternal
+                # Map tuple fields: _1=id, _2=name, _3=fullName, _4=signature,
+                # _5=filename, _6=lineNumber, _7=isExternal
                 if isinstance(item, dict):
                     methods.append(
                         {
@@ -1365,7 +1384,7 @@ def register_tools(mcp, services: dict):
             method_filename = ""
             line_number = -1
             line_number_end = -1
-            
+
             for item in result.data:
                 if isinstance(item, dict):
                     method_name_result = item.get("_1", "")
@@ -1378,7 +1397,9 @@ def register_tools(mcp, services: dict):
                 try:
                     # Get playground path
                     playground_path = os.path.abspath(
-                        os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+                        os.path.join(
+                            os.path.dirname(__file__), "..", "..", "playground"
+                        )
                     )
 
                     # Get source directory from session
@@ -1387,7 +1408,9 @@ def register_tools(mcp, services: dict):
                         cpg_cache_key = get_cpg_cache_key(
                             session.source_type, session.source_path, session.language
                         )
-                        source_dir = os.path.join(playground_path, "codebases", cpg_cache_key)
+                        source_dir = os.path.join(
+                            playground_path, "codebases", cpg_cache_key
+                        )
                     else:
                         # For local paths, use the session source path directly
                         source_path = session.source_path
@@ -1400,18 +1423,24 @@ def register_tools(mcp, services: dict):
 
                     # Check if file exists and read it
                     if os.path.exists(file_path) and os.path.isfile(file_path):
-                        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                        with open(
+                            file_path, "r", encoding="utf-8", errors="replace"
+                        ) as f:
                             lines = f.readlines()
 
                         # Validate line numbers
                         total_lines = len(lines)
-                        if line_number <= total_lines and line_number_end >= line_number:
+                        if (
+                            line_number <= total_lines
+                            and line_number_end >= line_number
+                        ):
                             # Extract the code snippet (lines are 0-indexed in the list)
                             actual_end_line = min(line_number_end, total_lines)
-                            code_lines = lines[line_number - 1 : actual_end_line]
+                            code_lines = lines[line_number - 1: actual_end_line]
                             full_code = "".join(code_lines)
                         else:
-                            full_code = f"// Invalid line range: {line_number}-{line_number_end}, file has {total_lines} lines"
+                            full_code = f"// Invalid line range: {line_number}-{
+                                line_number_end}, file has {total_lines} lines"
                     else:
                         full_code = f"// Source file not found: {method_filename}"
                 except Exception as e:
@@ -1604,84 +1633,86 @@ def register_tools(mcp, services: dict):
 
             # Build query based on direction
             method_escaped = re.escape(method_name)
-            
+
             if direction == "outgoing":
                 # Use depth-independent BFS traversal for call graph expansion
                 # Traverse caller -> calls -> callee for arbitrary depth
                 query = (
                     f'val rootMethod = cpg.method.name("{method_escaped}").l\n'
-                    f'if (rootMethod.nonEmpty) {{\n'
-                    f'  val rootName = rootMethod.head.name\n'
-                    f'  var allCalls = scala.collection.mutable.ListBuffer[(String, String, Int)]()\n'
-                    f'  var toVisit = scala.collection.mutable.Queue[(io.shiftleft.codepropertygraph.generated.nodes.Method, Int)]()\n'
-                    f'  var visited = Set[String]()\n'
-                    f'  \n'
-                    f'  toVisit.enqueue((rootMethod.head, 0))\n'
-                    f'  \n'
-                    f'  while (toVisit.nonEmpty) {{\n'
-                    f'    val (current, currentDepth) = toVisit.dequeue()\n'
-                    f'    val currentName = current.name\n'
-                    f'    \n'
-                    f'    if (!visited.contains(currentName) && currentDepth < {depth}) {{\n'
-                    f'      visited = visited + currentName\n'
-                    f'      val callees = current.call.callee.l\n'
-                    f'      \n'
-                    f'      for (callee <- callees) {{\n'
-                    f'        val calleeName = callee.name\n'
+                    f"if (rootMethod.nonEmpty) {{\n"
+                    f"  val rootName = rootMethod.head.name\n"
+                    f"  var allCalls = scala.collection.mutable.ListBuffer[(String, String, Int)]()\n"
+                    f"  var toVisit = scala.collection.mutable.Queue[(io.shiftleft.codepropertygraph.generated.nodes.Method, Int)]()\n"
+                    f"  var visited = Set[String]()\n"
+                    f"  \n"
+                    f"  toVisit.enqueue((rootMethod.head, 0))\n"
+                    f"  \n"
+                    f"  while (toVisit.nonEmpty) {{\n"
+                    f"    val (current, currentDepth) = toVisit.dequeue()\n"
+                    f"    val currentName = current.name\n"
+                    f"    \n"
+                    f"    if (!visited.contains(currentName) && currentDepth < {
+                        depth}) {{\n"
+                    f"      visited = visited + currentName\n"
+                    f"      val callees = current.call.callee.l\n"
+                    f"      \n"
+                    f"      for (callee <- callees) {{\n"
+                    f"        val calleeName = callee.name\n"
                     f'        if (!calleeName.startsWith("<operator>")) {{\n'
-                    f'          allCalls += ((currentName, calleeName, currentDepth + 1))\n'
-                    f'          if (!visited.contains(calleeName)) {{\n'
-                    f'            toVisit.enqueue((callee, currentDepth + 1))\n'
-                    f'          }}\n'
-                    f'        }}\n'
-                    f'      }}\n'
-                    f'    }}\n'
-                    f'  }}\n'
-                    f'  \n'
-                    f'  allCalls.toList.map(t => (t._1, t._2, t._3)).toJsonPretty\n'
-                    f'}} else List[(String, String, Int)]().toJsonPretty'
+                    f"          allCalls += ((currentName, calleeName, currentDepth + 1))\n"
+                    f"          if (!visited.contains(calleeName)) {{\n"
+                    f"            toVisit.enqueue((callee, currentDepth + 1))\n"
+                    f"          }}\n"
+                    f"        }}\n"
+                    f"      }}\n"
+                    f"    }}\n"
+                    f"  }}\n"
+                    f"  \n"
+                    f"  allCalls.toList.map(t => (t._1, t._2, t._3)).toJsonPretty\n"
+                    f"}} else List[(String, String, Int)]().toJsonPretty"
                 )
             else:  # incoming
                 # For incoming calls, find all methods that call the target using BFS
                 # This finds methods that call the target at any depth
                 query = (
                     f'val targetMethod = cpg.method.name("{method_escaped}").l\n'
-                    f'if (targetMethod.nonEmpty) {{\n'
-                    f'  val targetName = targetMethod.head.name\n'
-                    f'  var allCallers = scala.collection.mutable.ListBuffer[(String, String, Int)]()\n'
-                    f'  var toVisit = scala.collection.mutable.Queue[(io.shiftleft.codepropertygraph.generated.nodes.Method, Int)]()\n'
-                    f'  var visited = Set[String]()\n'
-                    f'  \n'
-                    f'  // Start with direct callers\n'
-                    f'  val directCallers = targetMethod.head.caller.l\n'
-                    f'  for (caller <- directCallers) {{\n'
-                    f'    allCallers += ((caller.name, targetName, 1))\n'
-                    f'    toVisit.enqueue((caller, 1))\n'
-                    f'  }}\n'
-                    f'  \n'
-                    f'  // BFS to find indirect callers\n'
-                    f'  while (toVisit.nonEmpty) {{\n'
-                    f'    val (current, currentDepth) = toVisit.dequeue()\n'
-                    f'    val currentName = current.name\n'
-                    f'    \n'
-                    f'    if (!visited.contains(currentName) && currentDepth < {depth}) {{\n'
-                    f'      visited = visited + currentName\n'
-                    f'      val incomingCallers = current.caller.l\n'
-                    f'      \n'
-                    f'      for (caller <- incomingCallers) {{\n'
-                    f'        val callerName = caller.name\n'
+                    f"if (targetMethod.nonEmpty) {{\n"
+                    f"  val targetName = targetMethod.head.name\n"
+                    f"  var allCallers = scala.collection.mutable.ListBuffer[(String, String, Int)]()\n"
+                    f"  var toVisit = scala.collection.mutable.Queue[(io.shiftleft.codepropertygraph.generated.nodes.Method, Int)]()\n"
+                    f"  var visited = Set[String]()\n"
+                    f"  \n"
+                    f"  // Start with direct callers\n"
+                    f"  val directCallers = targetMethod.head.caller.l\n"
+                    f"  for (caller <- directCallers) {{\n"
+                    f"    allCallers += ((caller.name, targetName, 1))\n"
+                    f"    toVisit.enqueue((caller, 1))\n"
+                    f"  }}\n"
+                    f"  \n"
+                    f"  // BFS to find indirect callers\n"
+                    f"  while (toVisit.nonEmpty) {{\n"
+                    f"    val (current, currentDepth) = toVisit.dequeue()\n"
+                    f"    val currentName = current.name\n"
+                    f"    \n"
+                    f"    if (!visited.contains(currentName) && currentDepth < {
+                        depth}) {{\n"
+                    f"      visited = visited + currentName\n"
+                    f"      val incomingCallers = current.caller.l\n"
+                    f"      \n"
+                    f"      for (caller <- incomingCallers) {{\n"
+                    f"        val callerName = caller.name\n"
                     f'        if (!callerName.startsWith("<operator>")) {{\n'
-                    f'          allCallers += ((callerName, targetName, currentDepth + 1))\n'
-                    f'          if (!visited.contains(callerName)) {{\n'
-                    f'            toVisit.enqueue((caller, currentDepth + 1))\n'
-                    f'          }}\n'
-                    f'        }}\n'
-                    f'      }}\n'
-                    f'    }}\n'
-                    f'  }}\n'
-                    f'  \n'
-                    f'  allCallers.toList.map(t => (t._1, t._2, t._3)).toJsonPretty\n'
-                    f'}} else List[(String, String, Int)]().toJsonPretty'
+                    f"          allCallers += ((callerName, targetName, currentDepth + 1))\n"
+                    f"          if (!visited.contains(callerName)) {{\n"
+                    f"            toVisit.enqueue((caller, currentDepth + 1))\n"
+                    f"          }}\n"
+                    f"        }}\n"
+                    f"      }}\n"
+                    f"    }}\n"
+                    f"  }}\n"
+                    f"  \n"
+                    f"  allCallers.toList.map(t => (t._1, t._2, t._3)).toJsonPretty\n"
+                    f"}} else List[(String, String, Int)]().toJsonPretty"
                 )
 
             result = await query_executor.execute_query(
@@ -1772,8 +1803,11 @@ def register_tools(mcp, services: dict):
 
             await session_manager.touch_session(session_id)
 
-            query = f'cpg.method.name("{method_name}").map(m => (m.name, m.parameter.map(p => ' \
-                f'(p.name, p.typeFullName, p.index)).l)).toJsonPretty'
+            query = (
+                f'cpg.method.name("{
+                    method_name}").map(m => (m.name, m.parameter.map(p => '
+                f"(p.name, p.typeFullName, p.index)).l)).toJsonPretty"
+            )
 
             result = await query_executor.execute_query(
                 session_id=session_id,
@@ -1930,7 +1964,10 @@ def register_tools(mcp, services: dict):
 
     @mcp.tool()
     async def find_taint_sources(
-        session_id: str, language: Optional[str] = None, source_patterns: Optional[list] = None, limit: int = 200
+        session_id: str,
+        language: Optional[str] = None,
+        source_patterns: Optional[list] = None,
+        limit: int = 200,
     ) -> Dict[str, Any]:
         """
         Locate likely external input points (taint sources).
@@ -1981,19 +2018,32 @@ def register_tools(mcp, services: dict):
             # Determine language and patterns
             lang = language or session.language or "c"
             cfg = services["config"]
-            taint_cfg = getattr(cfg.cpg, "taint_sources", {}) if hasattr(cfg.cpg, "taint_sources") else {}
+            taint_cfg = (
+                getattr(cfg.cpg, "taint_sources", {})
+                if hasattr(cfg.cpg, "taint_sources")
+                else {}
+            )
 
             patterns = source_patterns or taint_cfg.get(lang, [])
             if not patterns:
                 # Fallback to common C patterns
-                patterns = ["getenv", "fgets", "scanf", "read", "recv", "accept", "fopen"]
+                patterns = [
+                    "getenv",
+                    "fgets",
+                    "scanf",
+                    "read",
+                    "recv",
+                    "accept",
+                    "fopen",
+                ]
 
             # Build Joern query searching for call names matching any pattern
             # Remove trailing parens from patterns for proper regex matching
             cleaned_patterns = [p.rstrip("(") for p in patterns]
             joined = "|".join([re.escape(p) for p in cleaned_patterns])
             # Use cpg.call where name matches regex
-            query = f'cpg.call.name("{joined}").map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take({limit})'
+            query = f'cpg.call.name("{
+                joined}").map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take({limit})'
 
             result = await query_executor.execute_query(
                 session_id=session_id,
@@ -2004,32 +2054,46 @@ def register_tools(mcp, services: dict):
             )
 
             if not result.success:
-                return {"success": False, "error": {"code": "QUERY_ERROR", "message": result.error}}
+                return {
+                    "success": False,
+                    "error": {"code": "QUERY_ERROR", "message": result.error},
+                }
 
             sources = []
             for item in result.data:
                 if isinstance(item, dict):
-                    sources.append({
-                        "node_id": item.get("_1"),
-                        "name": item.get("_2"),
-                        "code": item.get("_3"),
-                        "filename": item.get("_4"),
-                        "lineNumber": item.get("_5"),
-                        "method": item.get("_6"),
-                    })
+                    sources.append(
+                        {
+                            "node_id": item.get("_1"),
+                            "name": item.get("_2"),
+                            "code": item.get("_3"),
+                            "filename": item.get("_4"),
+                            "lineNumber": item.get("_5"),
+                            "method": item.get("_6"),
+                        }
+                    )
 
             return {"success": True, "sources": sources, "total": len(sources)}
 
         except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
             logger.error(f"Error finding taint sources: {e}")
-            return {"success": False, "error": {"code": type(e).__name__.upper(), "message": str(e)}}
+            return {
+                "success": False,
+                "error": {"code": type(e).__name__.upper(), "message": str(e)},
+            }
         except Exception as e:
             logger.error(f"Unexpected error finding taint sources: {e}", exc_info=True)
-            return {"success": False, "error": {"code": "INTERNAL_ERROR", "message": str(e)}}
+            return {
+                "success": False,
+                "error": {"code": "INTERNAL_ERROR", "message": str(e)},
+            }
 
     @mcp.tool()
     async def find_taint_sinks(
-        session_id: str, language: Optional[str] = None, sink_patterns: Optional[list] = None, limit: int = 200
+        session_id: str,
+        language: Optional[str] = None,
+        sink_patterns: Optional[list] = None,
+        limit: int = 200,
     ) -> Dict[str, Any]:
         """
         Locate dangerous sinks where tainted data could cause vulnerabilities.
@@ -2079,7 +2143,11 @@ def register_tools(mcp, services: dict):
 
             lang = language or session.language or "c"
             cfg = services["config"]
-            taint_cfg = getattr(cfg.cpg, "taint_sinks", {}) if hasattr(cfg.cpg, "taint_sinks") else {}
+            taint_cfg = (
+                getattr(cfg.cpg, "taint_sinks", {})
+                if hasattr(cfg.cpg, "taint_sinks")
+                else {}
+            )
 
             patterns = sink_patterns or taint_cfg.get(lang, [])
             if not patterns:
@@ -2088,7 +2156,8 @@ def register_tools(mcp, services: dict):
             # Remove trailing parens from patterns for proper regex matching
             cleaned_patterns = [p.rstrip("(") for p in patterns]
             joined = "|".join([re.escape(p) for p in cleaned_patterns])
-            query = f'cpg.call.name("{joined}").map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take({limit})'
+            query = f'cpg.call.name("{
+                joined}").map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take({limit})'
 
             result = await query_executor.execute_query(
                 session_id=session_id,
@@ -2099,28 +2168,39 @@ def register_tools(mcp, services: dict):
             )
 
             if not result.success:
-                return {"success": False, "error": {"code": "QUERY_ERROR", "message": result.error}}
+                return {
+                    "success": False,
+                    "error": {"code": "QUERY_ERROR", "message": result.error},
+                }
 
             sinks = []
             for item in result.data:
                 if isinstance(item, dict):
-                    sinks.append({
-                        "node_id": item.get("_1"),
-                        "name": item.get("_2"),
-                        "code": item.get("_3"),
-                        "filename": item.get("_4"),
-                        "lineNumber": item.get("_5"),
-                        "method": item.get("_6"),
-                    })
+                    sinks.append(
+                        {
+                            "node_id": item.get("_1"),
+                            "name": item.get("_2"),
+                            "code": item.get("_3"),
+                            "filename": item.get("_4"),
+                            "lineNumber": item.get("_5"),
+                            "method": item.get("_6"),
+                        }
+                    )
 
             return {"success": True, "sinks": sinks, "total": len(sinks)}
 
         except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
             logger.error(f"Error finding taint sinks: {e}")
-            return {"success": False, "error": {"code": type(e).__name__.upper(), "message": str(e)}}
+            return {
+                "success": False,
+                "error": {"code": type(e).__name__.upper(), "message": str(e)},
+            }
         except Exception as e:
             logger.error(f"Unexpected error finding taint sinks: {e}", exc_info=True)
-            return {"success": False, "error": {"code": "INTERNAL_ERROR", "message": str(e)}}
+            return {
+                "success": False,
+                "error": {"code": "INTERNAL_ERROR", "message": str(e)},
+            }
 
     @mcp.tool()
     async def find_taint_flows(
@@ -2134,10 +2214,10 @@ def register_tools(mcp, services: dict):
     ) -> Dict[str, Any]:
         """
         Find dataflow paths from source to sink by tracking through assignments and identifiers.
-        
+
         This tool traces how data flows from a source call (e.g., malloc, getenv) to a sink call
         (e.g., free, system) by following the intermediate variables, assignments, and identifiers.
-        
+
         ✅ WHAT IT CAN DO:
         - Track return value flows: allocate() → variable → deallocate(variable)
           Example: ptr = allocate_memory(size); ... deallocate_memory(ptr);
@@ -2145,7 +2225,7 @@ def register_tools(mcp, services: dict):
           Example: input = get_user_data(); ... temp = input; ... process(temp);
         - Find direct identifier matches between source output and sink input
         - Work within intra-procedural scope (same function/method)
-        
+
         ❌ WHAT IT CANNOT DO:
         - Interprocedural dataflow (across function boundaries)
           Example: Can't track: main() calls helper(x) which passes x to worker(y)
@@ -2159,25 +2239,25 @@ def register_tools(mcp, services: dict):
         - Control-flow dependent paths
           Example: May miss: if(cond) ptr = allocate(); ... if(cond) deallocate(ptr);
           Reason: Doesn't analyze conditions
-        
+
         💡 HOW IT WORKS:
         1. Locates the source call (e.g., allocate_memory at line 42)
         2. Finds what variable receives the result (e.g., buffer = allocate_memory())
         3. Searches for that identifier in sink call arguments (e.g., deallocate_memory(buffer))
         4. Reports if there's a direct match
-        
+
         🔧 USE THIS TOOL WHEN:
         - Checking for resource leaks: allocate/acquire → deallocate/release
         - Finding use-after-free: deallocate → subsequent use
         - Tracing user input: get_input/read_data → dangerous_function
         - Simple variable flow within one function
-        
+
         ⚠️ LIMITATIONS TO UNDERSTAND:
         - This is a SIMPLE identifier-based flow tracker, not full taint analysis
         - It finds DIRECT identifier matches, not semantic dataflow
         - For complex analysis, combine with get_call_graph and manual inspection
         - Best used as a starting point for deeper investigation
-        
+
         Args:
             session_id: The session ID from create_cpg_session
             source_node_id: Node ID of source call (from find_taint_sources)
@@ -2191,7 +2271,7 @@ def register_tools(mcp, services: dict):
             max_path_length: Maximum length of dataflow paths to consider in elements (default: 20)
                 Paths with more elements will be filtered out to avoid extremely long chains
             timeout: Maximum execution time in seconds (default: 60)
-        
+
         Returns:
             {
                 "success": true,
@@ -2219,7 +2299,7 @@ def register_tools(mcp, services: dict):
                     "explanation": "allocate_memory() returns value assigned to 'buffer', which is used as argument to deallocate_memory()"
                 }
             }
-        
+
         Example - What WORKS:
             # Memory allocation -> deallocation flow
             find_taint_flows(
@@ -2228,7 +2308,7 @@ def register_tools(mcp, services: dict):
                 sink_location="main.c:58"      # deallocate_memory(buffer)
             )
             # Result: ✓ Found flow through variable 'buffer'
-        
+
         Example - What DOESN'T work:
             # Interprocedural flow
             find_taint_flows(
@@ -2243,9 +2323,13 @@ def register_tools(mcp, services: dict):
 
             # Validate that we have proper source and sink specifications
             if not source_node_id and not source_location:
-                raise ValidationError("Either source_node_id or source_location must be provided")
+                raise ValidationError(
+                    "Either source_node_id or source_location must be provided"
+                )
             if not sink_node_id and not sink_location:
-                raise ValidationError("Either sink_node_id or sink_location must be provided")
+                raise ValidationError(
+                    "Either sink_node_id or sink_location must be provided"
+                )
 
             session_manager = services["session_manager"]
             query_executor = services["query_executor"]
@@ -2262,36 +2346,48 @@ def register_tools(mcp, services: dict):
             # Resolve source and sink nodes
             source_info = None
             sink_info = None
-            
+
             # Helper function to resolve node by ID or location
             async def resolve_node(node_id, location, node_type):
                 if node_id:
                     try:
                         node_id_long = int(node_id)
                     except ValueError:
-                        raise ValidationError(f"{node_type}_node_id must be a valid integer: {node_id}")
-                    query = f'cpg.call.id({node_id_long}L).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
+                        raise ValidationError(
+                            f"{node_type}_node_id must be a valid integer: {node_id}"
+                        )
+                    query = f'cpg.call.id({
+                        node_id_long}L).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
                 else:
                     parts = location.split(":")
                     if len(parts) < 2:
-                        raise ValidationError(f"{node_type}_location must be in format 'filename:line' or 'filename:line:method'")
+                        raise ValidationError(
+                            f"{node_type}_location must be in format 'filename:line' or 'filename:line:method'"
+                        )
                     filename = parts[0]
                     try:
                         line_num = int(parts[1])
                     except ValueError:
-                        raise ValidationError(f"Line number must be a valid integer: {parts[1]}")
+                        raise ValidationError(
+                            f"Line number must be a valid integer: {parts[1]}"
+                        )
                     method_name = parts[2] if len(parts) > 2 else None
-                    
+
                     if method_name:
-                        query = f'cpg.call.where(_.file.name(".*{filename}$")).lineNumber({line_num}).filter(_.method.fullName.contains("{method_name}")).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
+                        query = f'cpg.call.where(_.file.name(".*{filename}$")).lineNumber({line_num}).filter(_.method.fullName.contains("{
+                            method_name}")).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
                     else:
-                        query = f'cpg.call.where(_.file.name(".*{filename}$")).lineNumber({line_num}).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
-                
+                        query = f'cpg.call.where(_.file.name(".*{filename}$")).lineNumber({
+                            line_num}).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
+
                 result = await query_executor.execute_query(
-                    session_id=session_id, cpg_path="/workspace/cpg.bin",
-                    query=query, timeout=10, limit=1
+                    session_id=session_id,
+                    cpg_path="/workspace/cpg.bin",
+                    query=query,
+                    timeout=10,
+                    limit=1,
                 )
-                
+
                 if result.success and result.data and len(result.data) > 0:
                     item = result.data[0]
                     if isinstance(item, dict) and item.get("_1"):
@@ -2303,7 +2399,7 @@ def register_tools(mcp, services: dict):
                             "method": item.get("_5"),
                         }
                 return None
-            
+
             source_info = await resolve_node(source_node_id, source_location, "source")
             sink_info = await resolve_node(sink_node_id, sink_location, "sink")
 
@@ -2314,31 +2410,31 @@ def register_tools(mcp, services: dict):
                     "source": source_info,
                     "sink": sink_info,
                     "flow_found": False,
-                    "message": f"Could not resolve source or sink from provided identifiers"
+                    "message": f"Could not resolve source or sink from provided identifiers",
                 }
 
             # Build dataflow query to find paths from source to sink
             source_id = source_info["node_id"]
             sink_id = sink_info["node_id"]
-            
-            query = f'''
+
+            query = f"""
             {{
               val source = cpg.call.id({source_id}L).l.headOption
               val sink = cpg.call.id({sink_id}L).l.headOption
-              
+
               val flows = if (source.nonEmpty && sink.nonEmpty) {{
                 // Simple dataflow: source -> identifier -> sink
                 val sourceCall = source.get
                 val sinkCall = sink.get
-                
+
                 val assignments = sourceCall.inAssignment.l
                 if (assignments.nonEmpty) {{
                   val assign = assignments.head
                   val targetVar = assign.target.code
-                  
+
                   val sinkArgs = sinkCall.argument.code.l
                   val matches = sinkArgs.contains(targetVar)
-                  
+
                   if (matches) {{
                     List(Map(
                       "_1" -> 0,  // flow_idx
@@ -2358,9 +2454,9 @@ def register_tools(mcp, services: dict):
               }} else {{
                 List()
               }}
-              
+
               flows
-            }}.toJsonPretty'''
+            }}.toJsonPretty"""
 
             result = await query_executor.execute_query(
                 session_id=session_id,
@@ -2381,27 +2477,40 @@ def register_tools(mcp, services: dict):
             if result.success and result.data:
                 # Result is a list of flow maps
                 for item in result.data:
-                    if isinstance(item, dict) and "_1" in item and "_2" in item and "_3" in item:
-                        flows.append({
-                            "path_id": item["_1"],
-                            "path_length": item["_2"],
-                            "nodes": item["_3"]
-                        })
-            
+                    if (
+                        isinstance(item, dict)
+                        and "_1" in item
+                        and "_2" in item
+                        and "_3" in item
+                    ):
+                        flows.append(
+                            {
+                                "path_id": item["_1"],
+                                "path_length": item["_2"],
+                                "nodes": item["_3"],
+                            }
+                        )
+
             return {
                 "success": True,
                 "source": source_info,
                 "sink": sink_info,
                 "flows": flows,
-                "total_flows": len(flows)
+                "total_flows": len(flows),
             }
 
         except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
             logger.error(f"Error finding taint flows: {e}")
-            return {"success": False, "error": {"code": type(e).__name__.upper(), "message": str(e)}}
+            return {
+                "success": False,
+                "error": {"code": type(e).__name__.upper(), "message": str(e)},
+            }
         except Exception as e:
             logger.error(f"Unexpected error finding taint flows: {e}", exc_info=True)
-            return {"success": False, "error": {"code": "INTERNAL_ERROR", "message": str(e)}}
+            return {
+                "success": False,
+                "error": {"code": "INTERNAL_ERROR", "message": str(e)},
+            }
 
     @mcp.tool()
     async def check_method_reachability(
@@ -2453,33 +2562,33 @@ def register_tools(mcp, services: dict):
             query = (
                 f'val source = cpg.method.name("{source_escaped}").l\n'
                 f'val target = cpg.method.name("{target_escaped}").l\n'
-                f'val reachable = if (source.nonEmpty && target.nonEmpty) {{\n'
-                f'  val targetName = target.head.name\n'
-                f'  // BFS traversal of call graph using recursive method traversal\n'
-                f'  var visited = Set[String]()\n'
-                f'  var toVisit = scala.collection.mutable.Queue[io.shiftleft.codepropertygraph.generated.nodes.Method]()\n'
-                f'  toVisit.enqueue(source.head)\n'
-                f'  var found = false\n'
-                f'  \n'
-                f'  while (toVisit.nonEmpty && !found) {{\n'
-                f'    val current = toVisit.dequeue()\n'
-                f'    val currentName = current.name\n'
-                f'    if (!visited.contains(currentName)) {{\n'
-                f'      visited = visited + currentName\n'
-                f'      val callees = current.call.callee.l\n'
-                f'      for (callee <- callees) {{\n'
-                f'        val calleeName = callee.name\n'
-                f'        if (calleeName == targetName) {{\n'
-                f'          found = true\n'
+                f"val reachable = if (source.nonEmpty && target.nonEmpty) {{\n"
+                f"  val targetName = target.head.name\n"
+                f"  // BFS traversal of call graph using recursive method traversal\n"
+                f"  var visited = Set[String]()\n"
+                f"  var toVisit = scala.collection.mutable.Queue[io.shiftleft.codepropertygraph.generated.nodes.Method]()\n"
+                f"  toVisit.enqueue(source.head)\n"
+                f"  var found = false\n"
+                f"  \n"
+                f"  while (toVisit.nonEmpty && !found) {{\n"
+                f"    val current = toVisit.dequeue()\n"
+                f"    val currentName = current.name\n"
+                f"    if (!visited.contains(currentName)) {{\n"
+                f"      visited = visited + currentName\n"
+                f"      val callees = current.call.callee.l\n"
+                f"      for (callee <- callees) {{\n"
+                f"        val calleeName = callee.name\n"
+                f"        if (calleeName == targetName) {{\n"
+                f"          found = true\n"
                 f'        }} else if (!visited.contains(calleeName) && !calleeName.startsWith("<operator>")) {{\n'
-                f'          toVisit.enqueue(callee)\n'
-                f'        }}\n'
-                f'      }}\n'
-                f'    }}\n'
-                f'  }}\n'
-                f'  found\n'
-                f'}} else false\n'
-                f'List(reachable).toJsonPretty'
+                f"          toVisit.enqueue(callee)\n"
+                f"        }}\n"
+                f"      }}\n"
+                f"    }}\n"
+                f"  }}\n"
+                f"  found\n"
+                f"}} else false\n"
+                f"List(reachable).toJsonPretty"
             )
 
             result = await query_executor.execute_query(
@@ -2501,8 +2610,11 @@ def register_tools(mcp, services: dict):
                 # The query returns a boolean result
                 reachable = bool(result.data[0])
 
-            message = f"Method '{target_method}' is {'reachable' if reachable else 'not reachable'} " \
-                      f"from '{source_method}'"
+            message = (
+                f"Method '{target_method}' is {
+                    'reachable' if reachable else 'not reachable'} "
+                f"from '{source_method}'"
+            )
 
             return {
                 "success": True,
@@ -2615,37 +2727,42 @@ def register_tools(mcp, services: dict):
 
             # Step 1: Resolve target call node
             target_call = None
-            
+
             if node_id:
                 # Direct node ID lookup - most efficient and unambiguous
                 query = (
-                    f'cpg.id({node_id}).map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), '
-                    f'c.lineNumber.getOrElse(-1), c.method.name, c.argument.code.l)).headOption'
+                    f'cpg.id({
+                        node_id}).map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), '
+                    f"c.lineNumber.getOrElse(-1), c.method.name, c.argument.code.l)).headOption"
                 )
             else:
                 # Parse location string to find call
                 parts = location.split(":")
                 if len(parts) < 2:
-                    raise ValidationError("location must be in format 'filename:line' or 'filename:line:callname'")
-                
+                    raise ValidationError(
+                        "location must be in format 'filename:line' or 'filename:line:callname'"
+                    )
+
                 filename = parts[0]
                 line_num = parts[1]
                 call_name = parts[2] if len(parts) > 2 else None
-                
+
                 # Build query to find call at location
                 if call_name:
                     query = (
-                        f'cpg.file.name(".*{re.escape(filename)}.*").call.name("{call_name}").lineNumber({line_num})'
+                        f'cpg.file.name(".*{re.escape(filename)
+                                            }.*").call.name("{call_name}").lineNumber({line_num})'
                         f'.map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), '
-                        f'c.lineNumber.getOrElse(-1), c.method.name, c.argument.code.l)).headOption'
+                        f"c.lineNumber.getOrElse(-1), c.method.name, c.argument.code.l)).headOption"
                     )
                 else:
                     query = (
-                        f'cpg.file.name(".*{re.escape(filename)}.*").call.lineNumber({line_num})'
+                        f'cpg.file.name(".*{re.escape(filename)
+                                            }.*").call.lineNumber({line_num})'
                         f'.map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), '
-                        f'c.lineNumber.getOrElse(-1), c.method.name, c.argument.code.l)).headOption'
+                        f"c.lineNumber.getOrElse(-1), c.method.name, c.argument.code.l)).headOption"
                     )
-            
+
             result = await query_executor.execute_query(
                 session_id=session_id,
                 cpg_path="/workspace/cpg.bin",
@@ -2659,7 +2776,7 @@ def register_tools(mcp, services: dict):
                     "success": False,
                     "error": {
                         "code": "NOT_FOUND",
-                        "message": f"Call not found: node_id={node_id}, location={location}"
+                        "message": f"Call not found: node_id={node_id}, location={location}",
                     },
                 }
 
@@ -2684,15 +2801,21 @@ def register_tools(mcp, services: dict):
             if include_dataflow and target_call["arguments"]:
                 for arg in target_call["arguments"]:
                     # Clean up argument
-                    clean_arg = arg.strip().replace("\"", "")
-                    if not clean_arg or clean_arg.isdigit() or clean_arg.startswith("(") or clean_arg.startswith("0x"):
+                    clean_arg = arg.strip().replace('"', "")
+                    if (
+                        not clean_arg
+                        or clean_arg.isdigit()
+                        or clean_arg.startswith("(")
+                        or clean_arg.startswith("0x")
+                    ):
                         continue
 
                     # Find identifiers with this name and their definitions
                     dataflow_query = (
-                        f'cpg.identifier.name("{re.escape(clean_arg)}").l.take(10).map(id => '
+                        f'cpg.identifier.name("{
+                            re.escape(clean_arg)}").l.take(10).map(id => '
                         f'(id.code, id.file.name.headOption.getOrElse("unknown"), '
-                        f'id.lineNumber.getOrElse(-1), id.method.name))'
+                        f"id.lineNumber.getOrElse(-1), id.method.name))"
                     )
 
                     dataflow_result = await query_executor.execute_query(
@@ -2704,15 +2827,19 @@ def register_tools(mcp, services: dict):
                     )
 
                     if dataflow_result.success and dataflow_result.data:
-                        for dflow_item in dataflow_result.data[:5]:  # Limit to 5 per argument
+                        for dflow_item in dataflow_result.data[
+                            :5
+                        ]:  # Limit to 5 per argument
                             if isinstance(dflow_item, dict):
-                                slice_result["dataflow"].append({
-                                    "variable": clean_arg,
-                                    "code": dflow_item.get("_1", ""),
-                                    "filename": dflow_item.get("_2", ""),
-                                    "lineNumber": dflow_item.get("_3", -1),
-                                    "method": dflow_item.get("_4", ""),
-                                })
+                                slice_result["dataflow"].append(
+                                    {
+                                        "variable": clean_arg,
+                                        "code": dflow_item.get("_1", ""),
+                                        "filename": dflow_item.get("_2", ""),
+                                        "lineNumber": dflow_item.get("_3", -1),
+                                        "method": dflow_item.get("_4", ""),
+                                    }
+                                )
 
             # Step 3: Get control dependencies
             if include_control_flow:
@@ -2720,7 +2847,7 @@ def register_tools(mcp, services: dict):
                 control_query = (
                     f'cpg.id({target_call["node_id"]}).controlledBy.map(ctrl => '
                     f'(ctrl.code, ctrl.file.name.headOption.getOrElse("unknown"), '
-                    f'ctrl.lineNumber.getOrElse(-1), ctrl.method.name)).dedup.take(20)'
+                    f"ctrl.lineNumber.getOrElse(-1), ctrl.method.name)).dedup.take(20)"
                 )
 
                 control_result = await query_executor.execute_query(
@@ -2734,17 +2861,19 @@ def register_tools(mcp, services: dict):
                 if control_result.success and control_result.data:
                     for ctrl_item in control_result.data:
                         if isinstance(ctrl_item, dict):
-                            slice_result["control_dependencies"].append({
-                                "code": ctrl_item.get("_1", ""),
-                                "filename": ctrl_item.get("_2", ""),
-                                "lineNumber": ctrl_item.get("_3", -1),
-                                "method": ctrl_item.get("_4", ""),
-                            })
+                            slice_result["control_dependencies"].append(
+                                {
+                                    "code": ctrl_item.get("_1", ""),
+                                    "filename": ctrl_item.get("_2", ""),
+                                    "lineNumber": ctrl_item.get("_3", -1),
+                                    "method": ctrl_item.get("_4", ""),
+                                }
+                            )
 
             total_nodes = (
-                1 +  # target call
-                len(slice_result["dataflow"]) +
-                len(slice_result["control_dependencies"])
+                1  # target call
+                + len(slice_result["dataflow"])
+                + len(slice_result["control_dependencies"])
             )
 
             return {
@@ -2966,7 +3095,7 @@ def register_tools(mcp, services: dict):
                 end_line = total_lines
 
             # Extract the code snippet (lines are 0-indexed in the list)
-            code_lines = lines[start_line - 1 : end_line]
+            code_lines = lines[start_line - 1: end_line]
             code = "".join(code_lines)
 
             return {
@@ -2996,15 +3125,15 @@ def register_tools(mcp, services: dict):
         source_name: str,
         sink_name: str,
         arg_index: int = 0,
-        limit: int = 100
+        limit: int = 100,
     ) -> Dict[str, Any]:
         """
         Find flows where the EXACT SAME expression is passed as an argument to both source and sink calls.
-        
+
         This tool matches calls based on argument expression equality. It is useful for finding
         cases where a variable or expression is reused across multiple function calls within
         the same scope or function.
-        
+
         ✅ WHAT IT CAN DO:
         - Match variables passed to multiple functions with the same name
           Example: count passed to both validate_input(count) and process_data(count)
@@ -3012,7 +3141,7 @@ def register_tools(mcp, services: dict):
           Example: BUFFER_SIZE used in allocate_buffer(BUFFER_SIZE) and init_buffer(BUFFER_SIZE)
         - Track simple expressions reused in multiple calls
           Example: offset+4 used in read_data(offset+4) and write_data(offset+4)
-        
+
         ❌ WHAT IT CANNOT DO:
         - Track variables that change names across function boundaries
           Example: data (in main) → input_data (in helper function)
@@ -3025,25 +3154,25 @@ def register_tools(mcp, services: dict):
           Reason: Complex expressions don't maintain exact equality
         - Perform interprocedural dataflow analysis
           Reason: Only looks at argument text matching, not semantic flow
-        
+
         💡 USE THIS TOOL WHEN:
         - Looking for intra-procedural argument reuse patterns
         - Finding variables passed to multiple validation/processing functions
         - Identifying shared constants or configuration values
         - Analyzing argument consistency within the same function scope
-        
+
         🔧 FOR INTERPROCEDURAL ANALYSIS, USE:
         - find_taint_flows: Full dataflow analysis with source/sink tracking
         - get_call_graph: Understand call relationships
         - list_methods: Find methods that use specific calls (callee_pattern parameter)
-        
+
         Args:
             session_id: The session ID from create_cpg_session
             source_name: Name of the source function call (where argument originates)
             sink_name: Name of the sink function call (where argument is used)
             arg_index: Argument position to match (0-based indexing, default: 0)
             limit: Maximum number of matching flows to return (default: 100)
-        
+
         Returns:
             {
                 "success": true,
@@ -3070,7 +3199,7 @@ def register_tools(mcp, services: dict):
                 "total": 1,
                 "note": "Only finds EXACT expression matches, not semantic dataflow"
             }
-        
+
         Example Usage:
             # Find where user_count is passed to both functions
             find_argument_flows(
@@ -3079,7 +3208,7 @@ def register_tools(mcp, services: dict):
                 sink_name="process_data",
                 arg_index=0  # user_count is the first argument
             )
-            
+
             # This WON'T work: malloc -> free (return value vs variable name)
             find_argument_flows(
                 session_id="abc-123",
@@ -3103,10 +3232,12 @@ def register_tools(mcp, services: dict):
             # Single-line CPGQL query for argument-matching flows
             query = (
                 f'cpg.call.name("{source_name}").flatMap(src => {{'
-                f'  val argExpr = src.argument.l.lift({arg_index}).map(_.code).getOrElse("<no-arg>"); '
+                f'  val argExpr = src.argument.l.lift({
+                    arg_index}).map(_.code).getOrElse("<no-arg>"); '
                 f'  cpg.call.name("{sink_name}").filter(sink => '
-                f'    sink.argument.l.size > {arg_index} && sink.argument.l({arg_index}).code == argExpr'
-                f'  ).map(sink => Map('
+                f"    sink.argument.l.size > {
+                    arg_index} && sink.argument.l({arg_index}).code == argExpr"
+                f"  ).map(sink => Map("
                 f'    "source" -> Map('
                 f'      "name" -> src.name, '
                 f'      "filename" -> src.file.name.headOption.getOrElse("unknown"), '
@@ -3114,7 +3245,7 @@ def register_tools(mcp, services: dict):
                 f'      "code" -> src.code, '
                 f'      "method" -> src.methodFullName, '
                 f'      "matched_arg" -> argExpr'
-                f'    ), '
+                f"    ), "
                 f'    "sink" -> Map('
                 f'      "name" -> sink.name, '
                 f'      "filename" -> sink.file.name.headOption.getOrElse("unknown"), '
@@ -3122,9 +3253,9 @@ def register_tools(mcp, services: dict):
                 f'      "code" -> sink.code, '
                 f'      "method" -> sink.methodFullName, '
                 f'      "matched_arg" -> argExpr'
-                f'    )'
-                f'  ))'
-                f'}}).toJsonPretty'
+                f"    )"
+                f"  ))"
+                f"}}).toJsonPretty"
             )
 
             result = await query_executor.execute_query(
@@ -3132,31 +3263,31 @@ def register_tools(mcp, services: dict):
                 cpg_path="/workspace/cpg.bin",
                 query=query,
                 timeout=60,
-                limit=limit
+                limit=limit,
             )
-            
+
             if not result.success:
                 return {
                     "success": False,
-                    "error": {"code": "QUERY_ERROR", "message": result.error}
+                    "error": {"code": "QUERY_ERROR", "message": result.error},
                 }
-            
+
             return {
                 "success": True,
                 "flows": result.data if result.data else [],
                 "total": len(result.data) if result.data else 0,
-                "note": "Only finds EXACT expression matches, not semantic dataflow"
+                "note": "Only finds EXACT expression matches, not semantic dataflow",
             }
 
         except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
             logger.error(f"Error finding argument flows: {e}")
             return {
                 "success": False,
-                "error": {"code": type(e).__name__.upper(), "message": str(e)}
+                "error": {"code": type(e).__name__.upper(), "message": str(e)},
             }
         except Exception as e:
             logger.error(f"Unexpected error finding argument flows: {e}", exc_info=True)
             return {
                 "success": False,
-                "error": {"code": "INTERNAL_ERROR", "message": str(e)}
+                "error": {"code": "INTERNAL_ERROR", "message": str(e)},
             }

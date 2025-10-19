@@ -1,14 +1,15 @@
 """
 Tests for configuration management
 """
+
 import os
 import tempfile
+from unittest.mock import patch
+
 import yaml
-import pytest
-from unittest.mock import patch, mock_open
-from src.config import load_config, _substitute_env_vars, _dict_to_config
-from src.models import Config, ServerConfig, RedisConfig, SessionConfig, CPGConfig, QueryConfig, StorageConfig, JoernConfig
-from src.exceptions import ValidationError
+
+from src.config import _dict_to_config, _substitute_env_vars, load_config
+from src.models import Config
 
 
 class TestLoadConfig:
@@ -17,20 +18,16 @@ class TestLoadConfig:
     def test_load_config_from_file(self):
         """Test loading config from YAML file"""
         config_data = {
-            "server": {
-                "host": "127.0.0.1",
-                "port": 8080,
-                "log_level": "DEBUG"
-            },
+            "server": {"host": "127.0.0.1", "port": 8080, "log_level": "DEBUG"},
             "redis": {
                 "host": "redis-server",
                 "port": 6379,
                 "password": "secret",
-                "db": 1
-            }
+                "db": 1,
+            },
         }
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             yaml.dump(config_data, f)
             config_path = f.name
 
@@ -68,7 +65,7 @@ class TestLoadConfig:
             "QUERY_CACHE_ENABLED": "false",
             "QUERY_CACHE_TTL": "600",
             "WORKSPACE_ROOT": "/tmp/custom",
-            "CLEANUP_ON_SHUTDOWN": "false"
+            "CLEANUP_ON_SHUTDOWN": "false",
         }
 
         with patch.dict(os.environ, env_vars):
@@ -132,18 +129,15 @@ class TestLoadConfig:
         data = {
             "host": "${TEST_HOST}",
             "port": 8080,
-            "nested": {
-                "path": "${TEST_PATH}",
-                "value": "static"
-            },
-            "list": ["${TEST_ITEM1}", "static", "${TEST_ITEM2}"]
+            "nested": {"path": "${TEST_PATH}", "value": "static"},
+            "list": ["${TEST_ITEM1}", "static", "${TEST_ITEM2}"],
         }
 
         env_vars = {
             "TEST_HOST": "localhost",
             "TEST_PATH": "/tmp/test",
             "TEST_ITEM1": "item1",
-            "TEST_ITEM2": "item2"
+            "TEST_ITEM2": "item2",
         }
 
         with patch.dict(os.environ, env_vars):
@@ -159,12 +153,10 @@ class TestLoadConfig:
         """Test environment variable substitution with defaults"""
         data = {
             "host": "${TEST_HOST:default_host}",
-            "missing": "${MISSING_VAR:default_value}"
+            "missing": "${MISSING_VAR:default_value}",
         }
 
-        env_vars = {
-            "TEST_HOST": "actual_host"
-        }
+        env_vars = {"TEST_HOST": "actual_host"}
 
         with patch.dict(os.environ, env_vars):
             result = _substitute_env_vars(data)
@@ -174,11 +166,7 @@ class TestLoadConfig:
 
     def test_substitute_env_vars_no_substitution(self):
         """Test that non-template strings are unchanged"""
-        data = {
-            "host": "localhost",
-            "port": 8080,
-            "path": "/tmp/test"
-        }
+        data = {"host": "localhost", "port": 8080, "path": "/tmp/test"}
 
         result = _substitute_env_vars(data)
         assert result == data
@@ -190,39 +178,18 @@ class TestDictToConfig:
     def test_dict_to_config_full(self):
         """Test converting full config dictionary"""
         data = {
-            "server": {
-                "host": "127.0.0.1",
-                "port": 8080,
-                "log_level": "DEBUG"
-            },
+            "server": {"host": "127.0.0.1", "port": 8080, "log_level": "DEBUG"},
             "redis": {
                 "host": "redis-server",
                 "port": 6379,
                 "password": "secret",
-                "db": 1
+                "db": 1,
             },
-            "joern": {
-                "binary_path": "/usr/bin/joern",
-                "memory_limit": "8g"
-            },
-            "sessions": {
-                "ttl": 7200,
-                "idle_timeout": 3600,
-                "max_concurrent": 20
-            },
-            "cpg": {
-                "generation_timeout": 1200,
-                "max_repo_size_mb": 1000
-            },
-            "query": {
-                "timeout": 60,
-                "cache_enabled": False,
-                "cache_ttl": 600
-            },
-            "storage": {
-                "workspace_root": "/tmp/custom",
-                "cleanup_on_shutdown": False
-            }
+            "joern": {"binary_path": "/usr/bin/joern", "memory_limit": "8g"},
+            "sessions": {"ttl": 7200, "idle_timeout": 3600, "max_concurrent": 20},
+            "cpg": {"generation_timeout": 1200, "max_repo_size_mb": 1000},
+            "query": {"timeout": 60, "cache_enabled": False, "cache_ttl": 600},
+            "storage": {"workspace_root": "/tmp/custom", "cleanup_on_shutdown": False},
         }
 
         config = _dict_to_config(data)
@@ -249,14 +216,7 @@ class TestDictToConfig:
 
     def test_dict_to_config_partial(self):
         """Test converting partial config dictionary"""
-        data = {
-            "server": {
-                "port": 9000
-            },
-            "redis": {
-                "host": "custom-redis"
-            }
-        }
+        data = {"server": {"port": 9000}, "redis": {"host": "custom-redis"}}
 
         config = _dict_to_config(data)
 
@@ -284,22 +244,17 @@ class TestDictToConfig:
     def test_dict_to_config_type_conversions(self):
         """Test type conversions in config"""
         data = {
-            "server": {
-                "port": "9000",  # String to int
-                "log_level": "INFO"
-            },
+            "server": {"port": "9000", "log_level": "INFO"},  # String to int
             "redis": {
                 "port": "6380",  # String to int
                 "db": "2",  # String to int
-                "decode_responses": "false"  # String to bool
+                "decode_responses": "false",  # String to bool
             },
             "query": {
                 "cache_enabled": "true",  # String to bool
-                "timeout": "45"  # String to int
+                "timeout": "45",  # String to int
             },
-            "storage": {
-                "cleanup_on_shutdown": "false"  # String to bool
-            }
+            "storage": {"cleanup_on_shutdown": "false"},  # String to bool
         }
 
         config = _dict_to_config(data)

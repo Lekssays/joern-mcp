@@ -1,16 +1,19 @@
 """
 Tests for main module
 """
-import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+
+import main
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # Add the project root to the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import main module
-import main
+
 lifespan = main.lifespan
 
 
@@ -23,16 +26,25 @@ class TestLifespan:
         mock_mcp = AsyncMock()
 
         # Mock all the services and dependencies
-        with patch('main.load_config') as mock_load_config, \
-             patch('main.RedisClient') as mock_redis_client_class, \
-             patch('main.SessionManager') as mock_session_manager_class, \
-             patch('main.GitManager') as mock_git_manager_class, \
-             patch('main.CPGGenerator') as mock_cpg_generator_class, \
-             patch('main.DockerOrchestrator') as mock_docker_orch_class, \
-             patch('main.QueryExecutor') as mock_query_executor_class, \
-             patch('main.setup_logging') as mock_setup_logging, \
-             patch('main.logger') as mock_logger, \
-             patch('os.makedirs') as mock_makedirs:
+        with patch("main.load_config") as mock_load_config, patch(
+            "main.RedisClient"
+        ) as mock_redis_client_class, patch(
+            "main.SessionManager"
+        ) as mock_session_manager_class, patch(
+            "main.GitManager"
+        ) as mock_git_manager_class, patch(
+            "main.CPGGenerator"
+        ) as mock_cpg_generator_class, patch(
+            "main.DockerOrchestrator"
+        ) as mock_docker_orch_class, patch(
+            "main.QueryExecutor"
+        ) as mock_query_executor_class, patch(
+            "main.setup_logging"
+        ) as mock_setup_logging, patch(
+            "main.logger"
+        ) as mock_logger, patch(
+            "os.makedirs"
+        ) as mock_makedirs:
 
             # Setup mocks
             mock_config = AsyncMock()
@@ -50,7 +62,9 @@ class TestLifespan:
             mock_redis_client_class.return_value = mock_redis_client
 
             mock_session_manager = AsyncMock()
-            mock_session_manager.set_docker_cleanup_callback = MagicMock()  # Override to be sync
+            mock_session_manager.set_docker_cleanup_callback = (
+                MagicMock()
+            )  # Override to be sync
             mock_session_manager_class.return_value = mock_session_manager
 
             mock_git_manager = AsyncMock()
@@ -86,8 +100,9 @@ class TestLifespan:
         """Test lifespan with initialization failure"""
         mock_mcp = AsyncMock()
 
-        with patch('main.load_config', side_effect=Exception("Config load failed")), \
-             patch('main.logger') as mock_logger:
+        with patch(
+            "main.load_config", side_effect=Exception("Config load failed")
+        ), patch("main.logger") as mock_logger:
 
             with pytest.raises(Exception, match="Config load failed"):
                 async with lifespan(mock_mcp):
@@ -98,11 +113,13 @@ class TestLifespan:
         """Test lifespan with Redis connection failure"""
         mock_mcp = AsyncMock()
 
-        with patch('main.load_config') as mock_load_config, \
-             patch('main.RedisClient') as mock_redis_client_class, \
-             patch('main.setup_logging'), \
-             patch('os.makedirs'), \
-             patch('main.logger') as mock_logger:
+        with patch("main.load_config") as mock_load_config, patch(
+            "main.RedisClient"
+        ) as mock_redis_client_class, patch("main.setup_logging"), patch(
+            "os.makedirs"
+        ), patch(
+            "main.logger"
+        ) as mock_logger:
 
             mock_config = AsyncMock()
             mock_config.server.log_level = "INFO"
@@ -110,7 +127,9 @@ class TestLifespan:
             mock_load_config.return_value = mock_config
 
             mock_redis_client = AsyncMock()
-            mock_redis_client.connect = AsyncMock(side_effect=Exception("Redis connection failed"))
+            mock_redis_client.connect = AsyncMock(
+                side_effect=Exception("Redis connection failed")
+            )
             mock_redis_client_class.return_value = mock_redis_client
 
             with pytest.raises(Exception, match="Redis connection failed"):

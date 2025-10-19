@@ -1,24 +1,26 @@
 """
 Comprehensive tests for all MCP tools in mcp_tools.py
 """
-import pytest
+
 import asyncio
 import os
-import tempfile
 import shutil
-from datetime import datetime, UTC
-from unittest.mock import AsyncMock, MagicMock, patch, ANY
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
-from src.tools.mcp_tools import register_tools, get_cpg_cache_key, get_cpg_cache_path
-from src.models import Session, SessionStatus, Config, CPGConfig, QueryResult
+import pytest
+
 from src.exceptions import (
+    QueryExecutionError,
+    ResourceLimitError,
     SessionNotFoundError,
     SessionNotReadyError,
     ValidationError,
-    ResourceLimitError,
-    QueryExecutionError,
 )
+from src.models import Config, CPGConfig, QueryResult, Session, SessionStatus
+from src.tools.mcp_tools import get_cpg_cache_key, get_cpg_cache_path, register_tools
 
 
 class FakeMCP:
@@ -29,9 +31,11 @@ class FakeMCP:
 
     def tool(self):
         """Decorator to register functions by name"""
+
         def _decorator(func):
             self.registered[func.__name__] = func
             return func
+
         return _decorator
 
 
@@ -100,6 +104,7 @@ def fake_services():
 def ready_session():
     """Ready session fixture"""
     import uuid
+
     session_id = str(uuid.uuid4())
     return Session(
         id=session_id,
@@ -108,9 +113,9 @@ def ready_session():
         source_path="/tmp/test",
         language="c",
         status=SessionStatus.READY.value,
-        created_at=datetime.now(UTC),
-        last_accessed=datetime.now(UTC),
-        cpg_path="/tmp/workspace/repos/" + session_id + "/cpg.bin"
+        created_at=datetime.now(timezone.utc),
+        last_accessed=datetime.now(timezone.utc),
+        cpg_path="/tmp/workspace/repos/" + session_id + "/cpg.bin",
     )
 
 
@@ -133,24 +138,26 @@ class TestMCPTools:
 
         # Mock session creation
         import uuid
+
         session_id = str(uuid.uuid4())
         session = Session(
             id=session_id,
             source_type="github",
             source_path="https://github.com/user/repo",
             language="java",
-            status=SessionStatus.GENERATING.value
+            status=SessionStatus.GENERATING.value,
         )
         fake_services["session_manager"].create_session.return_value = session
 
         # Mock no existing CPG and patch shutil.copy2 calls
-        with patch("os.path.exists", return_value=False), \
-             patch("shutil.copy2") as mock_copy2:
+        with patch("os.path.exists", return_value=False), patch(
+            "shutil.copy2"
+        ) as mock_copy2:
             func = mcp.registered["create_cpg_session"]
             result = await func(
                 source_type="github",
                 source_path="https://github.com/user/repo",
-                language="java"
+                language="java",
             )
 
             # The function returns the session info directly on success
@@ -166,13 +173,14 @@ class TestMCPTools:
 
         # Mock session creation
         import uuid
+
         session_id = str(uuid.uuid4())
         session = Session(
             id=session_id,
             source_type="github",
             source_path="https://github.com/user/repo",
             language="java",
-            status=SessionStatus.READY.value
+            status=SessionStatus.READY.value,
         )
         fake_services["session_manager"].create_session.return_value = session
 
@@ -188,15 +196,17 @@ class TestMCPTools:
         with open(cpg_path, "w") as f:
             f.write("mock cpg")
 
-        with patch("src.tools.mcp_tools.os.path.abspath", return_value=playground_path), \
-             patch("os.path.exists", side_effect=lambda p: p == cpg_path), \
-             patch("shutil.copy2") as mock_copy2:
+        with patch(
+            "src.tools.mcp_tools.os.path.abspath", return_value=playground_path
+        ), patch("os.path.exists", side_effect=lambda p: p == cpg_path), patch(
+            "shutil.copy2"
+        ) as mock_copy2:
 
             func = mcp.registered["create_cpg_session"]
             result = await func(
                 source_type="github",
                 source_path="https://github.com/user/repo",
-                language="java"
+                language="java",
             )
 
             # Should return session info directly
@@ -215,7 +225,7 @@ class TestMCPTools:
         result = await func(
             source_type="invalid",
             source_path="https://github.com/user/repo",
-            language="java"
+            language="java",
         )
 
         assert result["success"] is False
@@ -232,9 +242,7 @@ class TestMCPTools:
 
         func = mcp.registered["run_cpgql_query_async"]
         result = await func(
-            session_id=ready_session.id,
-            query='cpg.method.name.toJson',
-            timeout=30
+            session_id=ready_session.id, query="cpg.method.name.toJson", timeout=30
         )
 
         assert result["success"] is True
@@ -252,7 +260,7 @@ class TestMCPTools:
         func = mcp.registered["run_cpgql_query_async"]
         result = await func(
             session_id="12345678-1234-5678-9012-123456789012",  # Valid UUID
-            query='cpg.method.name.toJson'
+            query="cpg.method.name.toJson",
         )
 
         assert result["success"] is False
@@ -267,7 +275,7 @@ class TestMCPTools:
         status_info = {
             "query_id": "query123",
             "status": "completed",
-            "execution_time": 1.5
+            "execution_time": 1.5,
         }
         fake_services["query_executor"].get_query_status.return_value = status_info
 
@@ -288,7 +296,7 @@ class TestMCPTools:
             success=True,
             data=[{"name": "main"}, {"name": "helper"}],
             row_count=2,
-            execution_time=1.2
+            execution_time=1.2,
         )
         fake_services["query_executor"].get_query_result.return_value = query_result
 
@@ -322,15 +330,12 @@ class TestMCPTools:
             success=True,
             data=[{"_1": "main"}, {"_1": "helper"}],
             row_count=2,
-            execution_time=0.8
+            execution_time=0.8,
         )
         fake_services["query_executor"].execute_query.return_value = query_result
 
         func = mcp.registered["run_cpgql_query"]
-        result = await func(
-            session_id=ready_session.id,
-            query='cpg.method.name.l'
-        )
+        result = await func(session_id=ready_session.id, query="cpg.method.name.l")
 
         assert result["success"] is True
         assert result["row_count"] == 2
@@ -343,8 +348,9 @@ class TestMCPTools:
 
         fake_services["session_manager"].get_session.return_value = ready_session
 
-        with patch("os.path.exists", return_value=True), \
-             patch("os.path.getsize", return_value=1024*1024):
+        with patch("os.path.exists", return_value=True), patch(
+            "os.path.getsize", return_value=1024 * 1024
+        ):
 
             func = mcp.registered["get_session_status"]
             result = await func(session_id=ready_session.id)
@@ -409,7 +415,7 @@ class TestMCPTools:
         query_result = QueryResult(
             success=True,
             data=["src/main.c", "src/utils.c", "include/header.h"],
-            row_count=3
+            row_count=3,
         )
         fake_services["query_executor"].execute_query.return_value = query_result
 
@@ -429,16 +435,18 @@ class TestMCPTools:
         fake_services["session_manager"].get_session.return_value = ready_session
         query_result = QueryResult(
             success=True,
-            data=[{
-                "_1": "12345",
-                "_2": "main",
-                "_3": "main",
-                "_4": "int main(int, char**)",
-                "_5": "main.c",
-                "_6": 10,
-                "_7": False
-            }],
-            row_count=1
+            data=[
+                {
+                    "_1": "12345",
+                    "_2": "main",
+                    "_3": "main",
+                    "_4": "int main(int, char**)",
+                    "_5": "main.c",
+                    "_6": 10,
+                    "_7": False,
+                }
+            ],
+            row_count=1,
         )
         fake_services["query_executor"].execute_query.return_value = query_result
 
@@ -451,7 +459,9 @@ class TestMCPTools:
         assert result["methods"][0]["name"] == "main"
 
     @pytest.mark.asyncio
-    async def test_get_method_source_success(self, fake_services, ready_session, temp_workspace):
+    async def test_get_method_source_success(
+        self, fake_services, ready_session, temp_workspace
+    ):
         """Test successful method source retrieval"""
         mcp = FakeMCP()
         register_tools(mcp, fake_services)
@@ -461,13 +471,15 @@ class TestMCPTools:
         # Mock query results
         query_result = QueryResult(
             success=True,
-            data=[{
-                "_1": "main",
-                "_2": "main.c",
-                "_3": 3,  # Start line of function
-                "_4": 7   # End line of function
-            }],
-            row_count=1
+            data=[
+                {
+                    "_1": "main",
+                    "_2": "main.c",
+                    "_3": 3,  # Start line of function
+                    "_4": 7,  # End line of function
+                }
+            ],
+            row_count=1,
         )
         fake_services["query_executor"].execute_query.return_value = query_result
 
@@ -477,14 +489,13 @@ class TestMCPTools:
         os.makedirs(source_dir, exist_ok=True)
         source_file = os.path.join(source_dir, "main.c")
         with open(source_file, "w") as f:
-            f.write("#include <stdio.h>\n\nint main() {\n    printf(\"Hello\\n\");\n    return 0;\n}\n")
+            f.write(
+                '#include <stdio.h>\n\nint main() {\n    printf("Hello\\n");\n    return 0;\n}\n'
+            )
 
         with patch("src.tools.mcp_tools.os.path.abspath", return_value=temp_workspace):
             func = mcp.registered["get_method_source"]
-            result = await func(
-                session_id=ready_session.id,
-                method_name="main"
-            )
+            result = await func(session_id=ready_session.id, method_name="main")
 
             assert result["success"] is True
             assert len(result["methods"]) == 1
@@ -499,14 +510,16 @@ class TestMCPTools:
         fake_services["session_manager"].get_session.return_value = ready_session
         query_result = QueryResult(
             success=True,
-            data=[{
-                "_1": "main",
-                "_2": "printf",
-                "_3": 'printf("Hello")',
-                "_4": "main.c",
-                "_5": 6
-            }],
-            row_count=1
+            data=[
+                {
+                    "_1": "main",
+                    "_2": "printf",
+                    "_3": 'printf("Hello")',
+                    "_4": "main.c",
+                    "_5": 6,
+                }
+            ],
+            row_count=1,
         )
         fake_services["query_executor"].execute_query.return_value = query_result
 
@@ -525,21 +538,12 @@ class TestMCPTools:
 
         fake_services["session_manager"].get_session.return_value = ready_session
         query_result = QueryResult(
-            success=True,
-            data=[{
-                "_1": "main",
-                "_2": "helper",
-                "_3": 1
-            }],
-            row_count=1
+            success=True, data=[{"_1": "main", "_2": "helper", "_3": 1}], row_count=1
         )
         fake_services["query_executor"].execute_query.return_value = query_result
 
         func = mcp.registered["get_call_graph"]
-        result = await func(
-            session_id=ready_session.id,
-            method_name="main"
-        )
+        result = await func(session_id=ready_session.id, method_name="main")
 
         assert result["success"] is True
         assert len(result["calls"]) == 1
@@ -554,22 +558,21 @@ class TestMCPTools:
         fake_services["session_manager"].get_session.return_value = ready_session
         query_result = QueryResult(
             success=True,
-            data=[{
-                "_1": "authenticate",
-                "_2": [
-                    {"_1": "username", "_2": "string", "_3": 1},
-                    {"_1": "password", "_2": "string", "_3": 2}
-                ]
-            }],
-            row_count=1
+            data=[
+                {
+                    "_1": "authenticate",
+                    "_2": [
+                        {"_1": "username", "_2": "string", "_3": 1},
+                        {"_1": "password", "_2": "string", "_3": 2},
+                    ],
+                }
+            ],
+            row_count=1,
         )
         fake_services["query_executor"].execute_query.return_value = query_result
 
         func = mcp.registered["list_parameters"]
-        result = await func(
-            session_id=ready_session.id,
-            method_name="authenticate"
-        )
+        result = await func(session_id=ready_session.id, method_name="authenticate")
 
         assert result["success"] is True
         assert len(result["methods"]) == 1
@@ -584,14 +587,16 @@ class TestMCPTools:
         fake_services["session_manager"].get_session.return_value = ready_session
         query_result = QueryResult(
             success=True,
-            data=[{
-                "_1": '"admin_password"',
-                "_2": "string",
-                "_3": "config.c",
-                "_4": 42,
-                "_5": "init_config"
-            }],
-            row_count=1
+            data=[
+                {
+                    "_1": '"admin_password"',
+                    "_2": "string",
+                    "_3": "config.c",
+                    "_4": 42,
+                    "_5": "init_config",
+                }
+            ],
+            row_count=1,
         )
         fake_services["query_executor"].execute_query.return_value = query_result
 
@@ -611,15 +616,17 @@ class TestMCPTools:
         fake_services["session_manager"].get_session.return_value = ready_session
         query_result = QueryResult(
             success=True,
-            data=[{
-                "_1": "12345",
-                "_2": "getenv",
-                "_3": 'getenv("PATH")',
-                "_4": "main.c",
-                "_5": 10,
-                "_6": "main"
-            }],
-            row_count=1
+            data=[
+                {
+                    "_1": "12345",
+                    "_2": "getenv",
+                    "_3": 'getenv("PATH")',
+                    "_4": "main.c",
+                    "_5": 10,
+                    "_6": "main",
+                }
+            ],
+            row_count=1,
         )
         fake_services["query_executor"].execute_query.return_value = query_result
 
@@ -639,15 +646,17 @@ class TestMCPTools:
         fake_services["session_manager"].get_session.return_value = ready_session
         query_result = QueryResult(
             success=True,
-            data=[{
-                "_1": "67890",
-                "_2": "system",
-                "_3": 'system(cmd)',
-                "_4": "main.c",
-                "_5": 100,
-                "_6": "execute_command"
-            }],
-            row_count=1
+            data=[
+                {
+                    "_1": "67890",
+                    "_2": "system",
+                    "_3": "system(cmd)",
+                    "_4": "main.c",
+                    "_5": 100,
+                    "_6": "execute_command",
+                }
+            ],
+            row_count=1,
         )
         fake_services["query_executor"].execute_query.return_value = query_result
 
@@ -665,50 +674,67 @@ class TestMCPTools:
         register_tools(mcp, fake_services)
 
         fake_services["session_manager"].get_session.return_value = ready_session
-        
+
         # Mock for source node lookup query
         source_info_result = QueryResult(
             success=True,
-            data=[{
-                "_1": 12345,  # node_id
-                "_2": 'getenv("PATH")',
-                "_3": "main.c",
-                "_4": 42,
-                "_5": "main"
-            }],
-            row_count=1
+            data=[
+                {
+                    "_1": 12345,  # node_id
+                    "_2": 'getenv("PATH")',
+                    "_3": "main.c",
+                    "_4": 42,
+                    "_5": "main",
+                }
+            ],
+            row_count=1,
         )
-        
+
         # Mock for sink node lookup query
         sink_info_result = QueryResult(
             success=True,
-            data=[{
-                "_1": 67890,  # node_id
-                "_2": 'system(cmd)',
-                "_3": "main.c",
-                "_4": 100,
-                "_5": "execute_command"
-            }],
-            row_count=1
+            data=[
+                {
+                    "_1": 67890,  # node_id
+                    "_2": "system(cmd)",
+                    "_3": "main.c",
+                    "_4": 100,
+                    "_5": "execute_command",
+                }
+            ],
+            row_count=1,
         )
-        
+
         # Mock for flow query - returns one flow with path information
         flow_query_result = QueryResult(
             success=True,
-            data=[{
-                "_1": 0,  # flow_idx
-                "_2": 3,  # path_length
-                "_3": [  # nodes
-                    {"_1": 'getenv("PATH")', "_2": "main.c", "_3": 42, "_4": "CALL"},
-                    {"_1": "path_var", "_2": "main.c", "_3": 45, "_4": "IDENTIFIER"},
-                    {"_1": 'system(cmd)', "_2": "main.c", "_3": 100, "_4": "CALL"}
-                ]
-            }],
-            row_count=1
+            data=[
+                {
+                    "_1": 0,  # flow_idx
+                    "_2": 3,  # path_length
+                    "_3": [  # nodes
+                        {
+                            "_1": 'getenv("PATH")',
+                            "_2": "main.c",
+                            "_3": 42,
+                            "_4": "CALL",
+                        },
+                        {
+                            "_1": "path_var",
+                            "_2": "main.c",
+                            "_3": 45,
+                            "_4": "IDENTIFIER",
+                        },
+                        {"_1": "system(cmd)", "_2": "main.c", "_3": 100, "_4": "CALL"},
+                    ],
+                }
+            ],
+            row_count=1,
         )
-        
+
         # Setup mock to return different results for different queries
         call_count = [0]
+
         async def mock_execute_query(*args, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
@@ -717,21 +743,19 @@ class TestMCPTools:
                 return sink_info_result
             else:
                 return flow_query_result
-        
+
         fake_services["query_executor"].execute_query.side_effect = mock_execute_query
 
         func = mcp.registered["find_taint_flows"]
         result = await func(
-            session_id=ready_session.id,
-            source_node_id="12345",
-            sink_node_id="67890"
+            session_id=ready_session.id, source_node_id="12345", sink_node_id="67890"
         )
 
         assert result["success"] is True
         assert result["source"]["node_id"] == 12345
         assert result["source"]["code"] == 'getenv("PATH")'
         assert result["sink"]["node_id"] == 67890
-        assert result["sink"]["code"] == 'system(cmd)'
+        assert result["sink"]["code"] == "system(cmd)"
         assert len(result["flows"]) == 1
         assert result["flows"][0]["path_length"] == 3
         assert len(result["flows"][0]["nodes"]) == 3
@@ -740,7 +764,9 @@ class TestMCPTools:
         assert len(result["flows"][0]["nodes"]) == 3
 
     @pytest.mark.asyncio
-    async def test_check_method_reachability_success(self, fake_services, ready_session):
+    async def test_check_method_reachability_success(
+        self, fake_services, ready_session
+    ):
         """Test successful method reachability check"""
         mcp = FakeMCP()
         register_tools(mcp, fake_services)
@@ -751,9 +777,7 @@ class TestMCPTools:
 
         func = mcp.registered["check_method_reachability"]
         result = await func(
-            session_id=ready_session.id,
-            source_method="main",
-            target_method="helper"
+            session_id=ready_session.id, source_method="main", target_method="helper"
         )
 
         assert result["success"] is True
@@ -761,7 +785,9 @@ class TestMCPTools:
         assert "helper" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_get_program_slice_success(self, fake_services, ready_session, temp_workspace):
+    async def test_get_program_slice_success(
+        self, fake_services, ready_session, temp_workspace
+    ):
         """Test successful program slice retrieval with node_id"""
         mcp = FakeMCP()
         register_tools(mcp, fake_services)
@@ -771,28 +797,32 @@ class TestMCPTools:
         # Mock target call query (using node ID)
         target_result = QueryResult(
             success=True,
-            data=[{
-                "_1": "12345",  # node_id
-                "_2": "memcpy",  # name
-                "_3": 'memcpy(buf, src, size)',  # code
-                "_4": "main.c",  # filename
-                "_5": 42,  # lineNumber
-                "_6": "vulnerable_function",  # method
-                "_7": ["buf", "src", "size"]  # arguments
-            }],
-            row_count=1
+            data=[
+                {
+                    "_1": "12345",  # node_id
+                    "_2": "memcpy",  # name
+                    "_3": "memcpy(buf, src, size)",  # code
+                    "_4": "main.c",  # filename
+                    "_5": 42,  # lineNumber
+                    "_6": "vulnerable_function",  # method
+                    "_7": ["buf", "src", "size"],  # arguments
+                }
+            ],
+            row_count=1,
         )
 
         # Mock dataflow queries for each argument (buf, src, size)
         dataflow_result_buf = QueryResult(
             success=True,
-            data=[{
-                "_1": "buf",  # code (identifier)
-                "_2": "main.c",  # filename
-                "_3": 10,  # lineNumber
-                "_4": "vulnerable_function"  # method
-            }],
-            row_count=1
+            data=[
+                {
+                    "_1": "buf",  # code (identifier)
+                    "_2": "main.c",  # filename
+                    "_3": 10,  # lineNumber
+                    "_4": "vulnerable_function",  # method
+                }
+            ],
+            row_count=1,
         )
 
         dataflow_result_src = QueryResult(success=True, data=[], row_count=0)
@@ -801,21 +831,23 @@ class TestMCPTools:
         # Mock control flow query
         control_result = QueryResult(
             success=True,
-            data=[{
-                "_1": 'if (size > 0)',  # code
-                "_2": "main.c",  # filename
-                "_3": 35,  # lineNumber
-                "_4": "vulnerable_function"  # method
-            }],
-            row_count=1
+            data=[
+                {
+                    "_1": "if (size > 0)",  # code
+                    "_2": "main.c",  # filename
+                    "_3": 35,  # lineNumber
+                    "_4": "vulnerable_function",  # method
+                }
+            ],
+            row_count=1,
         )
 
         fake_services["query_executor"].execute_query.side_effect = [
-            target_result,           # Target call lookup
-            dataflow_result_buf,     # Dataflow for "buf"
-            dataflow_result_src,     # Dataflow for "src"
-            dataflow_result_size,    # Dataflow for "size"
-            control_result           # Control dependencies
+            target_result,  # Target call lookup
+            dataflow_result_buf,  # Dataflow for "buf"
+            dataflow_result_src,  # Dataflow for "src"
+            dataflow_result_size,  # Dataflow for "size"
+            control_result,  # Control dependencies
         ]
 
         func = mcp.registered["get_program_slice"]
@@ -823,7 +855,7 @@ class TestMCPTools:
             session_id=ready_session.id,
             node_id="12345",
             include_dataflow=True,
-            include_control_flow=True
+            include_control_flow=True,
         )
 
         assert result["success"] is True
@@ -843,27 +875,26 @@ class TestMCPTools:
         # Mock target call query (using location)
         target_result = QueryResult(
             success=True,
-            data=[{
-                "_1": "67890",  # node_id
-                "_2": "system",  # name
-                "_3": 'system(cmd)',  # code
-                "_4": "main.c",  # filename
-                "_5": 100,  # lineNumber
-                "_6": "execute_cmd",  # method
-                "_7": ["cmd"]  # arguments
-            }],
-            row_count=1
+            data=[
+                {
+                    "_1": "67890",  # node_id
+                    "_2": "system",  # name
+                    "_3": "system(cmd)",  # code
+                    "_4": "main.c",  # filename
+                    "_5": 100,  # lineNumber
+                    "_6": "execute_cmd",  # method
+                    "_7": ["cmd"],  # arguments
+                }
+            ],
+            row_count=1,
         )
 
         # Mock control flow query
-        control_result = QueryResult(
-            success=True,
-            data=[],
-            row_count=0
-        )
+        control_result = QueryResult(success=True, data=[], row_count=0)
 
         fake_services["query_executor"].execute_query.side_effect = [
-            target_result, control_result
+            target_result,
+            control_result,
         ]
 
         func = mcp.registered["get_program_slice"]
@@ -871,7 +902,7 @@ class TestMCPTools:
             session_id=ready_session.id,
             location="main.c:100:system",
             include_dataflow=False,
-            include_control_flow=True
+            include_control_flow=True,
         )
 
         assert result["success"] is True
@@ -888,25 +919,28 @@ class TestMCPTools:
 
         # Mock metadata query
         meta_result = QueryResult(
-            success=True,
-            data=[{"_1": "C", "_2": "11"}],
-            row_count=1
+            success=True, data=[{"_1": "C", "_2": "11"}], row_count=1
         )
 
         # Mock stats query
         stats_result = QueryResult(
             success=True,
-            data=[{
-                "_1": 5,  # files
-                "_2": 25,  # methods
-                "_3": 20,  # user methods
-                "_4": 50,  # calls
-                "_5": 15   # literals
-            }],
-            row_count=1
+            data=[
+                {
+                    "_1": 5,  # files
+                    "_2": 25,  # methods
+                    "_3": 20,  # user methods
+                    "_4": 50,  # calls
+                    "_5": 15,  # literals
+                }
+            ],
+            row_count=1,
         )
 
-        fake_services["query_executor"].execute_query.side_effect = [meta_result, stats_result]
+        fake_services["query_executor"].execute_query.side_effect = [
+            meta_result,
+            stats_result,
+        ]
 
         func = mcp.registered["get_codebase_summary"]
         result = await func(session_id=ready_session.id)
@@ -917,7 +951,9 @@ class TestMCPTools:
         assert result["summary"]["total_methods"] == 25
 
     @pytest.mark.asyncio
-    async def test_get_code_snippet_success(self, fake_services, ready_session, temp_workspace):
+    async def test_get_code_snippet_success(
+        self, fake_services, ready_session, temp_workspace
+    ):
         """Test successful code snippet retrieval"""
         mcp = FakeMCP()
         register_tools(mcp, fake_services)
@@ -929,15 +965,14 @@ class TestMCPTools:
         os.makedirs(source_dir, exist_ok=True)
         source_file = os.path.join(source_dir, "main.c")
         with open(source_file, "w") as f:
-            f.write("#include <stdio.h>\n\nint main() {\n    printf(\"Hello\\n\");\n    return 0;\n}\n")
+            f.write(
+                '#include <stdio.h>\n\nint main() {\n    printf("Hello\\n");\n    return 0;\n}\n'
+            )
 
         with patch("src.tools.mcp_tools.os.path.abspath", return_value=temp_workspace):
             func = mcp.registered["get_code_snippet"]
             result = await func(
-                session_id=ready_session.id,
-                filename="main.c",
-                start_line=3,
-                end_line=6
+                session_id=ready_session.id, filename="main.c", start_line=3, end_line=6
             )
 
             assert result["success"] is True
@@ -989,7 +1024,9 @@ class TestErrorHandling:
         fake_services["session_manager"].get_session.return_value = None
 
         func = mcp.registered["get_session_status"]
-        result = await func(session_id="12345678-1234-5678-9012-123456789012")  # Valid UUID format
+        result = await func(
+            session_id="12345678-1234-5678-9012-123456789012"
+        )  # Valid UUID format
 
         assert result["success"] is False
         assert result["error"]["code"] == "SESSION_NOT_FOUND"
@@ -1001,10 +1038,10 @@ class TestErrorHandling:
         register_tools(mcp, fake_services)
 
         import uuid
+
         session_id = str(uuid.uuid4())
         generating_session = Session(
-            id=session_id,
-            status=SessionStatus.GENERATING.value
+            id=session_id, status=SessionStatus.GENERATING.value
         )
         fake_services["session_manager"].get_session.return_value = generating_session
 
@@ -1022,9 +1059,7 @@ class TestErrorHandling:
 
         func = mcp.registered["create_cpg_session"]
         result = await func(
-            source_type="github",
-            source_path="not-a-url",
-            language="java"
+            source_type="github", source_path="not-a-url", language="java"
         )
 
         assert result["success"] is False
@@ -1037,7 +1072,9 @@ class TestErrorHandling:
         register_tools(mcp, fake_services)
 
         fake_services["session_manager"].get_session.return_value = ready_session
-        fake_services["query_executor"].execute_query.side_effect = QueryExecutionError("Query failed")
+        fake_services["query_executor"].execute_query.side_effect = QueryExecutionError(
+            "Query failed"
+        )
 
         func = mcp.registered["run_cpgql_query"]
         result = await func(session_id=ready_session.id, query="invalid query")
@@ -1097,18 +1134,14 @@ class TestEdgeCases:
             data=[
                 {"_1": "main", "_2": "func1", "_3": 1},
                 {"_1": "func1", "_2": "func2", "_3": 2},
-                {"_1": "func2", "_2": "func3", "_3": 3}
+                {"_1": "func2", "_2": "func3", "_3": 3},
             ],
-            row_count=3
+            row_count=3,
         )
         fake_services["query_executor"].execute_query.return_value = query_result
 
         func = mcp.registered["get_call_graph"]
-        result = await func(
-            session_id=ready_session.id,
-            method_name="main",
-            depth=3
-        )
+        result = await func(session_id=ready_session.id, method_name="main", depth=3)
 
         assert result["success"] is True
         assert len(result["calls"]) == 3
@@ -1121,21 +1154,42 @@ class TestEdgeCases:
         register_tools(mcp, fake_services)
 
         fake_services["session_manager"].get_session.return_value = ready_session
-        
+
         # Mock source node lookup
-        source_result = QueryResult(success=True, data=[{
-            "_1": 111, "_2": 'getenv("X")', "_3": "file.c", "_4": 10, "_5": "func1"
-        }], row_count=1)
-        
+        source_result = QueryResult(
+            success=True,
+            data=[
+                {
+                    "_1": 111,
+                    "_2": 'getenv("X")',
+                    "_3": "file.c",
+                    "_4": 10,
+                    "_5": "func1",
+                }
+            ],
+            row_count=1,
+        )
+
         # Mock sink node lookup
-        sink_result = QueryResult(success=True, data=[{
-            "_1": 222, "_2": 'system(cmd)', "_3": "file.c", "_4": 20, "_5": "func2"
-        }], row_count=1)
-        
+        sink_result = QueryResult(
+            success=True,
+            data=[
+                {
+                    "_1": 222,
+                    "_2": "system(cmd)",
+                    "_3": "file.c",
+                    "_4": 20,
+                    "_5": "func2",
+                }
+            ],
+            row_count=1,
+        )
+
         # Mock flow query
         flow_result = QueryResult(success=True, data=[], row_count=0)
-        
+
         call_count = [0]
+
         async def mock_execute(*args, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
@@ -1144,7 +1198,7 @@ class TestEdgeCases:
                 return sink_result
             else:
                 return flow_result
-        
+
         fake_services["query_executor"].execute_query.side_effect = mock_execute
 
         func = mcp.registered["find_taint_flows"]
@@ -1152,7 +1206,7 @@ class TestEdgeCases:
             session_id=ready_session.id,
             source_node_id="111",
             sink_node_id="222",
-            max_path_length=5
+            max_path_length=5,
         )
 
         assert result["success"] is True

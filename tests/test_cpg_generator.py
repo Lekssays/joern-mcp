@@ -1,13 +1,16 @@
 """
 Tests for CPG generator
 """
-import pytest
+
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch, call
-from src.services.cpg_generator import CPGGenerator
-from src.models import CPGConfig, SessionStatus
-from src.services.session_manager import SessionManager
+from unittest.mock import AsyncMock, MagicMock, call, patch
+
+import pytest
+
 from src.exceptions import CPGGenerationError
+from src.models import CPGConfig, SessionStatus
+from src.services.cpg_generator import CPGGenerator
+from src.services.session_manager import SessionManager
 
 
 class TestCPGGenerator:
@@ -19,7 +22,7 @@ class TestCPGGenerator:
         return CPGConfig(
             generation_timeout=600,
             max_repo_size_mb=500,
-            supported_languages=["java", "python", "c", "cpp"]
+            supported_languages=["java", "python", "c", "cpp"],
         )
 
     @pytest.fixture
@@ -39,7 +42,7 @@ class TestCPGGenerator:
         mock_docker_client = MagicMock()
         mock_docker_client.ping = MagicMock()
 
-        with patch('docker.from_env', return_value=mock_docker_client):
+        with patch("docker.from_env", return_value=mock_docker_client):
             await cpg_generator.initialize()
 
             assert cpg_generator.docker_client == mock_docker_client
@@ -47,8 +50,10 @@ class TestCPGGenerator:
     @pytest.mark.asyncio
     async def test_initialize_failure(self, cpg_generator):
         """Test Docker client initialization failure"""
-        with patch('docker.from_env', side_effect=Exception("Docker not available")):
-            with pytest.raises(CPGGenerationError, match="Docker initialization failed"):
+        with patch("docker.from_env", side_effect=Exception("Docker not available")):
+            with pytest.raises(
+                CPGGenerationError, match="Docker initialization failed"
+            ):
                 await cpg_generator.initialize()
 
     @pytest.mark.asyncio
@@ -62,8 +67,7 @@ class TestCPGGenerator:
         cpg_generator.docker_client = mock_docker_client
 
         container_id = await cpg_generator.create_session_container(
-            session_id="session-123",
-            workspace_path="/tmp/workspace"
+            session_id="session-123", workspace_path="/tmp/workspace"
         )
 
         assert container_id == "container-123"
@@ -82,13 +86,14 @@ class TestCPGGenerator:
     async def test_create_session_container_failure(self, cpg_generator):
         """Test container creation failure"""
         mock_docker_client = MagicMock()
-        mock_docker_client.containers.run = MagicMock(side_effect=Exception("Container creation failed"))
+        mock_docker_client.containers.run = MagicMock(
+            side_effect=Exception("Container creation failed")
+        )
         cpg_generator.docker_client = mock_docker_client
 
         with pytest.raises(CPGGenerationError, match="Container creation failed"):
             await cpg_generator.create_session_container(
-                session_id="session-123",
-                workspace_path="/tmp/workspace"
+                session_id="session-123", workspace_path="/tmp/workspace"
             )
 
     @pytest.mark.asyncio
@@ -96,7 +101,9 @@ class TestCPGGenerator:
         """Test CPG generation for Java project"""
         # Setup mocks
         mock_container = MagicMock()
-        mock_container.exec_run = MagicMock(return_value=MagicMock(output=b"CPG generated successfully", exit_code=0))
+        mock_container.exec_run = MagicMock(
+            return_value=MagicMock(output=b"CPG generated successfully", exit_code=0)
+        )
 
         mock_docker_client = MagicMock()
         mock_docker_client.containers.get = MagicMock(return_value=mock_container)
@@ -104,37 +111,47 @@ class TestCPGGenerator:
         cpg_generator.session_containers["session-123"] = "container-123"
 
         # Mock the helper methods
-        with patch.object(cpg_generator, '_find_joern_executable', return_value="javasrc2cpg"), \
-             patch.object(cpg_generator, '_exec_command_async', return_value=""), \
-             patch.object(cpg_generator, '_validate_cpg_async', return_value=True):
+        with patch.object(
+            cpg_generator, "_find_joern_executable", return_value="javasrc2cpg"
+        ), patch.object(
+            cpg_generator, "_exec_command_async", return_value=""
+        ), patch.object(
+            cpg_generator, "_validate_cpg_async", return_value=True
+        ):
 
             mock_session_manager.update_status = AsyncMock()
             mock_session_manager.update_session = AsyncMock()
 
             result = await cpg_generator.generate_cpg(
-                session_id="session-123",
-                source_path="/workspace/src",
-                language="java"
+                session_id="session-123", source_path="/workspace/src", language="java"
             )
 
             assert result == "/workspace/cpg.bin"
-            mock_session_manager.update_status.assert_any_call("session-123", SessionStatus.GENERATING.value)
+            mock_session_manager.update_status.assert_any_call(
+                "session-123", SessionStatus.GENERATING.value
+            )
             mock_session_manager.update_session.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_generate_cpg_python(self, cpg_generator, mock_session_manager):
         """Test CPG generation for Python project"""
         mock_container = MagicMock()
-        mock_container.exec_run = MagicMock(return_value=MagicMock(output=b"CPG generated successfully", exit_code=0))
+        mock_container.exec_run = MagicMock(
+            return_value=MagicMock(output=b"CPG generated successfully", exit_code=0)
+        )
 
         mock_docker_client = MagicMock()
         mock_docker_client.containers.get = MagicMock(return_value=mock_container)
         cpg_generator.docker_client = mock_docker_client
         cpg_generator.session_containers["session-456"] = "container-456"
 
-        with patch.object(cpg_generator, '_find_joern_executable', return_value="pysrc2cpg"), \
-             patch.object(cpg_generator, '_exec_command_async', return_value=""), \
-             patch.object(cpg_generator, '_validate_cpg_async', return_value=True):
+        with patch.object(
+            cpg_generator, "_find_joern_executable", return_value="pysrc2cpg"
+        ), patch.object(
+            cpg_generator, "_exec_command_async", return_value=""
+        ), patch.object(
+            cpg_generator, "_validate_cpg_async", return_value=True
+        ):
 
             mock_session_manager.update_status = AsyncMock()
             mock_session_manager.update_session = AsyncMock()
@@ -142,7 +159,7 @@ class TestCPGGenerator:
             result = await cpg_generator.generate_cpg(
                 session_id="session-456",
                 source_path="/workspace/src",
-                language="python"
+                language="python",
             )
 
             assert result == "/workspace/cpg.bin"
@@ -156,8 +173,11 @@ class TestCPGGenerator:
         cpg_generator.docker_client = mock_docker_client
         cpg_generator.session_containers["session-123"] = "container-123"
 
-        with patch.object(cpg_generator, '_find_joern_executable', return_value="javasrc2cpg"), \
-             patch.object(cpg_generator, '_exec_command_async', side_effect=asyncio.TimeoutError()):
+        with patch.object(
+            cpg_generator, "_find_joern_executable", return_value="javasrc2cpg"
+        ), patch.object(
+            cpg_generator, "_exec_command_async", side_effect=asyncio.TimeoutError()
+        ):
 
             mock_session_manager.update_status = AsyncMock()
 
@@ -165,11 +185,13 @@ class TestCPGGenerator:
                 await cpg_generator.generate_cpg(
                     session_id="session-123",
                     source_path="/workspace/src",
-                    language="java"
+                    language="java",
                 )
 
     @pytest.mark.asyncio
-    async def test_generate_cpg_validation_failure(self, cpg_generator, mock_session_manager):
+    async def test_generate_cpg_validation_failure(
+        self, cpg_generator, mock_session_manager
+    ):
         """Test CPG generation with validation failure"""
         mock_container = MagicMock()
         mock_docker_client = MagicMock()
@@ -177,9 +199,13 @@ class TestCPGGenerator:
         cpg_generator.docker_client = mock_docker_client
         cpg_generator.session_containers["session-123"] = "container-123"
 
-        with patch.object(cpg_generator, '_find_joern_executable', return_value="javasrc2cpg"), \
-             patch.object(cpg_generator, '_exec_command_async', return_value=""), \
-             patch.object(cpg_generator, '_validate_cpg_async', return_value=False):
+        with patch.object(
+            cpg_generator, "_find_joern_executable", return_value="javasrc2cpg"
+        ), patch.object(
+            cpg_generator, "_exec_command_async", return_value=""
+        ), patch.object(
+            cpg_generator, "_validate_cpg_async", return_value=False
+        ):
 
             mock_session_manager.update_status = AsyncMock()
 
@@ -187,7 +213,7 @@ class TestCPGGenerator:
                 await cpg_generator.generate_cpg(
                     session_id="session-123",
                     source_path="/workspace/src",
-                    language="java"
+                    language="java",
                 )
 
     def test_language_commands_mapping(self, cpg_generator):
@@ -215,11 +241,15 @@ class TestCPGGenerator:
         """Test finding Joern executable successfully"""
         mock_container = MagicMock()
         # Mock successful test for javasrc2cpg at the first path
-        mock_container.exec_run = MagicMock(side_effect=[
-            MagicMock(exit_code=0),  # First path succeeds
-        ])
+        mock_container.exec_run = MagicMock(
+            side_effect=[
+                MagicMock(exit_code=0),  # First path succeeds
+            ]
+        )
 
-        result = await cpg_generator._find_joern_executable(mock_container, "javasrc2cpg")
+        result = await cpg_generator._find_joern_executable(
+            mock_container, "javasrc2cpg"
+        )
 
         assert result == "/opt/joern/joern-cli/javasrc2cpg"
 
@@ -230,7 +260,9 @@ class TestCPGGenerator:
         # Mock failed tests for all paths
         mock_container.exec_run = MagicMock(return_value=MagicMock(exit_code=1))
 
-        result = await cpg_generator._find_joern_executable(mock_container, "javasrc2cpg")
+        result = await cpg_generator._find_joern_executable(
+            mock_container, "javasrc2cpg"
+        )
 
         assert result == "/opt/joern/joern-cli/javasrc2cpg"  # Always returns full path
 
@@ -238,7 +270,7 @@ class TestCPGGenerator:
     async def test_validate_cpg_success(self, cpg_generator):
         """Test successful CPG validation with valid file size"""
         mock_container = MagicMock()
-        
+
         # Mock stat command to return file exists
         def mock_exec_run(cmd):
             mock_result = MagicMock()
@@ -248,10 +280,12 @@ class TestCPGGenerator:
             else:
                 mock_result.output = b"stat output..."
             return mock_result
-        
+
         mock_container.exec_run = mock_exec_run
 
-        result = await cpg_generator._validate_cpg_async(mock_container, "/workspace/cpg.bin")
+        result = await cpg_generator._validate_cpg_async(
+            mock_container, "/workspace/cpg.bin"
+        )
 
         assert result is True
 
@@ -260,10 +294,14 @@ class TestCPGGenerator:
         """Test CPG validation failure when file doesn't exist"""
         mock_container = MagicMock()
         mock_exec_result = MagicMock()
-        mock_exec_result.output = b"stat: cannot stat '/workspace/cpg.bin': No such file or directory"
+        mock_exec_result.output = (
+            b"stat: cannot stat '/workspace/cpg.bin': No such file or directory"
+        )
         mock_container.exec_run = MagicMock(return_value=mock_exec_result)
 
-        result = await cpg_generator._validate_cpg_async(mock_container, "/workspace/cpg.bin")
+        result = await cpg_generator._validate_cpg_async(
+            mock_container, "/workspace/cpg.bin"
+        )
 
         assert result is False
 
@@ -271,7 +309,7 @@ class TestCPGGenerator:
     async def test_validate_cpg_failure_empty_file(self, cpg_generator):
         """Test CPG validation failure when file is too small (empty or nearly empty)"""
         mock_container = MagicMock()
-        
+
         # Mock exec_run to return small file size
         def mock_exec_run(cmd):
             mock_result = MagicMock()
@@ -281,10 +319,12 @@ class TestCPGGenerator:
             else:
                 mock_result.output = b"stat output..."
             return mock_result
-        
+
         mock_container.exec_run = mock_exec_run
 
-        result = await cpg_generator._validate_cpg_async(mock_container, "/workspace/cpg.bin")
+        result = await cpg_generator._validate_cpg_async(
+            mock_container, "/workspace/cpg.bin"
+        )
 
         assert result is False
 
@@ -292,7 +332,7 @@ class TestCPGGenerator:
     async def test_validate_cpg_failure_too_small(self, cpg_generator):
         """Test CPG validation failure when file is smaller than minimum threshold"""
         mock_container = MagicMock()
-        
+
         # Mock exec_run to return very small file size
         def mock_exec_run(cmd):
             mock_result = MagicMock()
@@ -302,10 +342,12 @@ class TestCPGGenerator:
             else:
                 mock_result.output = b"stat output..."
             return mock_result
-        
+
         mock_container.exec_run = mock_exec_run
 
-        result = await cpg_generator._validate_cpg_async(mock_container, "/workspace/cpg.bin")
+        result = await cpg_generator._validate_cpg_async(
+            mock_container, "/workspace/cpg.bin"
+        )
 
         assert result is False
 
@@ -313,16 +355,18 @@ class TestCPGGenerator:
     async def test_extract_file_size_success(self, cpg_generator):
         """Test successful file size extraction"""
         mock_container = MagicMock()
-        
+
         def mock_exec_run(cmd):
             mock_result = MagicMock()
             if "stat -c%s" in cmd:
                 mock_result.output = b"5242880"  # 5MB
             return mock_result
-        
+
         mock_container.exec_run = mock_exec_run
 
-        result = await cpg_generator._extract_file_size_async(mock_container, "/workspace/cpg.bin")
+        result = await cpg_generator._extract_file_size_async(
+            mock_container, "/workspace/cpg.bin"
+        )
 
         assert result == 5242880
 
@@ -330,12 +374,10 @@ class TestCPGGenerator:
     async def test_extract_file_size_fallback(self, cpg_generator):
         """Test file size extraction with fallback to wc command"""
         mock_container = MagicMock()
-        
-        call_count = 0
+
         def mock_exec_run(cmd):
-            nonlocal call_count
             mock_result = MagicMock()
-            
+
             if "stat -c%s" in cmd:
                 # First call fails with non-numeric output
                 mock_result.output = b"invalid"
@@ -343,10 +385,12 @@ class TestCPGGenerator:
                 # Fallback to wc
                 mock_result.output = b"1048576"  # 1MB
             return mock_result
-        
+
         mock_container.exec_run = mock_exec_run
 
-        result = await cpg_generator._extract_file_size_async(mock_container, "/workspace/cpg.bin")
+        result = await cpg_generator._extract_file_size_async(
+            mock_container, "/workspace/cpg.bin"
+        )
 
         assert result == 1048576
 
@@ -392,7 +436,9 @@ class TestCPGGenerator:
     async def test_close_session_error(self, cpg_generator):
         """Test closing session with container error"""
         mock_docker_client = MagicMock()
-        mock_docker_client.containers.get = MagicMock(side_effect=Exception("Container not found"))
+        mock_docker_client.containers.get = MagicMock(
+            side_effect=Exception("Container not found")
+        )
         cpg_generator.docker_client = mock_docker_client
         cpg_generator.session_containers["session-123"] = "container-456"
 
@@ -406,10 +452,12 @@ class TestCPGGenerator:
         """Test cleanup of all containers"""
         cpg_generator.session_containers = {
             "session1": "container1",
-            "session2": "container2"
+            "session2": "container2",
         }
 
-        with patch.object(cpg_generator, 'close_session', new_callable=AsyncMock) as mock_close:
+        with patch.object(
+            cpg_generator, "close_session", new_callable=AsyncMock
+        ) as mock_close:
             await cpg_generator.cleanup()
 
             assert mock_close.call_count == 2
@@ -421,7 +469,11 @@ class TestCPGGenerator:
         """Test streaming logs during CPG generation"""
         mock_container = MagicMock()
         mock_exec_result = MagicMock()
-        mock_exec_result.output = [b"Starting CPG generation...\n", b"Processing files...\n", b"CPG created successfully\n"]
+        mock_exec_result.output = [
+            b"Starting CPG generation...\n",
+            b"Processing files...\n",
+            b"CPG created successfully\n",
+        ]
         mock_container.exec_run = MagicMock(return_value=mock_exec_result)
 
         mock_docker_client = MagicMock()
@@ -429,13 +481,15 @@ class TestCPGGenerator:
         cpg_generator.docker_client = mock_docker_client
         cpg_generator.session_containers["session-123"] = "container-123"
 
-        with patch.object(cpg_generator, '_find_joern_executable', return_value="javasrc2cpg"):
+        with patch.object(
+            cpg_generator, "_find_joern_executable", return_value="javasrc2cpg"
+        ):
             logs = []
             async for log in cpg_generator.stream_logs(
                 session_id="session-123",
                 source_path="/workspace/src",
                 language="java",
-                output_path="/output.cpg"
+                output_path="/output.cpg",
             ):
                 logs.append(log)
 
@@ -450,7 +504,7 @@ class TestCPGGenerator:
             session_id="session-123",
             source_path="/workspace/src",
             language="java",
-            output_path="/output.cpg"
+            output_path="/output.cpg",
         ):
             logs.append(log)
 
@@ -469,7 +523,7 @@ class TestCPGGenerator:
             session_id="session-123",
             source_path="/workspace/src",
             language="unsupported",
-            output_path="/output.cpg"
+            output_path="/output.cpg",
         ):
             logs.append(log)
 

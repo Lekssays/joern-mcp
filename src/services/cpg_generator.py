@@ -1,14 +1,15 @@
 """
 CPG Generator for creating Code Property Graphs using Docker containers
 """
+
 import asyncio
 import logging
-import os
-import docker
-from typing import AsyncIterator, Optional, Dict
+from typing import AsyncIterator, Dict, Optional
 
-from ..models import CPGConfig, SessionStatus
+import docker
+
 from ..exceptions import CPGGenerationError
+from ..models import CPGConfig, SessionStatus
 from .session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -35,9 +36,7 @@ class CPGGenerator:
     }
 
     def __init__(
-        self,
-        config: CPGConfig,
-        session_manager: Optional[SessionManager] = None
+        self, config: CPGConfig, session_manager: Optional[SessionManager] = None
     ):
         self.config = config
         self.session_manager = session_manager
@@ -55,101 +54,94 @@ class CPGGenerator:
             raise CPGGenerationError(f"Docker initialization failed: {str(e)}")
 
     async def create_session_container(
-        self,
-        session_id: str,
-        workspace_path: str
+        self, session_id: str, workspace_path: str
     ) -> str:
         """Create a new Docker container for a session"""
         try:
             container_name = f"joern-session-{session_id}"
-            
+
             # Container configuration for interactive Joern shell
             container_config = {
                 "image": "joern:latest",
                 "name": container_name,
                 "detach": True,
-                "volumes": {
-                    workspace_path: {
-                        "bind": "/workspace", 
-                        "mode": "rw"
-                    }
-                },
+                "volumes": {workspace_path: {"bind": "/workspace", "mode": "rw"}},
                 "working_dir": "/workspace",
-                "environment": {
-                    "JAVA_OPTS": "-Xmx4g"
-                },
+                "environment": {"JAVA_OPTS": "-Xmx4g"},
                 "command": "tail -f /dev/null",  # Keep container running
-                "network_mode": "bridge"
+                "network_mode": "bridge",
             }
-            
+
             container = self.docker_client.containers.run(**container_config)
             container_id = container.id
-            
+
             self.session_containers[session_id] = container_id
             logger.info(f"Created container {container_id} for session {session_id}")
-            
+
             return container_id
-            
+
         except Exception as e:
             logger.error(f"Failed to create container for session {session_id}: {e}")
             raise CPGGenerationError(f"Container creation failed: {str(e)}")
 
     async def generate_cpg(
-        self,
-        session_id: str,
-        source_path: str,
-        language: str
+        self, session_id: str, source_path: str, language: str
     ) -> str:
         """Generate CPG from source code in container"""
         try:
             logger.info(f"Starting CPG generation for session {session_id}")
-            
+
             if self.session_manager:
                 await self.session_manager.update_status(
-                    session_id,
-                    SessionStatus.GENERATING.value
+                    session_id, SessionStatus.GENERATING.value
                 )
-            
+
             container_id = self.session_containers.get(session_id)
             if not container_id:
                 raise CPGGenerationError(f"No container found for session {session_id}")
-            
+
             container = self.docker_client.containers.get(container_id)
-            
+
             # Generate CPG using Joern - store in workspace directory
             cpg_output_path = "/workspace/cpg.bin"
             base_cmd = self.LANGUAGE_COMMANDS[language]
             joern_cmd = await self._find_joern_executable(container, base_cmd)
-            
-            # Build command with exclusions for various languages to focus on core functionality
+
+            # Build command with exclusions for various languages to focus on core
+            # functionality
             command_parts = [f"{joern_cmd} {source_path} -o {cpg_output_path}"]
-            
+
             # Apply exclusions for languages that support them
-            if language in self.config.languages_with_exclusions and self.config.exclusion_patterns:
+            if (
+                language in self.config.languages_with_exclusions
+                and self.config.exclusion_patterns
+            ):
                 # Use exclusion patterns from configuration
-                combined_regex = "|".join(f"({pattern})" for pattern in self.config.exclusion_patterns)
+                combined_regex = "|".join(
+                    f"({pattern})" for pattern in self.config.exclusion_patterns
+                )
                 command_parts.append(f'--exclude-regex "{combined_regex}"')
-            
+
             command = " ".join(command_parts)
-            
+
             logger.info(f"Executing CPG generation command: {command}")
-            
+
             # Execute with timeout
             try:
                 result = await asyncio.wait_for(
                     self._exec_command_async(container, command),
-                    timeout=self.config.generation_timeout
+                    timeout=self.config.generation_timeout,
                 )
-                
+
                 logger.info(f"CPG generation output:\n{result}")
-                
+
                 # Validate CPG was created
                 if await self._validate_cpg_async(container, cpg_output_path):
                     if self.session_manager:
                         await self.session_manager.update_session(
                             session_id,
                             status=SessionStatus.READY.value,
-                            cpg_path=cpg_output_path
+                            cpg_path=cpg_output_path,
                         )
                     logger.info(f"CPG generation completed for session {session_id}")
                     return cpg_output_path
@@ -158,23 +150,21 @@ class CPGGenerator:
                     logger.error(error_msg)
                     if self.session_manager:
                         await self.session_manager.update_status(
-                            session_id,
-                            SessionStatus.ERROR.value,
-                            error_msg
+                            session_id, SessionStatus.ERROR.value, error_msg
                         )
                     raise CPGGenerationError(error_msg)
-                    
+
             except asyncio.TimeoutError:
-                error_msg = f"CPG generation timed out after {self.config.generation_timeout}s"
+                error_msg = (
+                    f"CPG generation timed out after {self.config.generation_timeout}s"
+                )
                 logger.error(error_msg)
                 if self.session_manager:
                     await self.session_manager.update_status(
-                        session_id,
-                        SessionStatus.ERROR.value,
-                        error_msg
+                        session_id, SessionStatus.ERROR.value, error_msg
                     )
                 raise CPGGenerationError(error_msg)
-                
+
         except CPGGenerationError:
             raise
         except Exception as e:
@@ -182,20 +172,18 @@ class CPGGenerator:
             logger.error(error_msg)
             if self.session_manager:
                 await self.session_manager.update_status(
-                    session_id,
-                    SessionStatus.ERROR.value,
-                    error_msg
+                    session_id, SessionStatus.ERROR.value, error_msg
                 )
             raise CPGGenerationError(error_msg)
 
     async def _exec_command_async(self, container, command: str) -> str:
         """Execute command in container asynchronously"""
         loop = asyncio.get_event_loop()
-        
+
         def _exec_sync():
             result = container.exec_run(command, workdir="/workspace")
-            return result.output.decode('utf-8', errors='ignore')
-        
+            return result.output.decode("utf-8", errors="ignore")
+
         return await loop.run_in_executor(None, _exec_sync)
 
     async def _find_joern_executable(self, container, base_command: str) -> str:
@@ -206,41 +194,45 @@ class CPGGenerator:
         """Validate that CPG file was created successfully and is not empty"""
         try:
             loop = asyncio.get_event_loop()
-            
+
             def _check_file():
                 # Check if file exists and get size using stat command
                 result = container.exec_run(f"stat {cpg_path}")
-                return result.output.decode('utf-8', errors='ignore').strip()
-            
+                return result.output.decode("utf-8", errors="ignore").strip()
+
             stat_result = await loop.run_in_executor(None, _check_file)
-            
+
             # Check if stat was successful (file exists)
             if "No such file" in stat_result or "cannot stat" in stat_result:
                 logger.error(f"CPG file not found: {stat_result}")
                 return False
-            
+
             # Extract file size from stat output
             # stat output format contains "Size: <bytes>" line
             file_size = await self._extract_file_size_async(container, cpg_path)
-            
+
             if file_size is None:
                 logger.error("Could not determine CPG file size")
                 return False
-            
+
             # Check if file is too small (empty or nearly empty)
-            # Joern CPGs typically have a minimum size; even small projects generate CPGs > 1KB
+            # Joern CPGs typically have a minimum size; even small projects generate
+            # CPGs > 1KB
             min_cpg_size = 1024  # 1KB minimum
-            
+
             if file_size < min_cpg_size:
                 logger.error(
-                    f"CPG file is too small ({file_size} bytes), likely empty or corrupted. "
+                    f"CPG file is too small ({
+                        file_size} bytes), likely empty or corrupted. "
                     f"Minimum expected size: {min_cpg_size} bytes"
                 )
                 return False
-            
-            logger.info(f"CPG file created successfully: {cpg_path} (size: {file_size} bytes)")
+
+            logger.info(
+                f"CPG file created successfully: {cpg_path} (size: {file_size} bytes)"
+            )
             return True
-            
+
         except Exception as e:
             logger.error(f"CPG validation failed: {e}")
             return False
@@ -249,28 +241,30 @@ class CPGGenerator:
         """Extract file size from a file in the container"""
         try:
             loop = asyncio.get_event_loop()
-            
+
             def _get_size():
                 # Use a more reliable method to get file size
                 result = container.exec_run(f"stat -c%s {cpg_path}")
-                return result.output.decode('utf-8', errors='ignore').strip()
-            
+                return result.output.decode("utf-8", errors="ignore").strip()
+
             size_str = await loop.run_in_executor(None, _get_size)
-            
+
             # Try to parse the size
             try:
                 return int(size_str)
             except ValueError:
                 # Fallback: try alternative command if stat -c doesn't work
-                logger.debug(f"stat -c command returned: {size_str}, trying alternative method")
-                
+                logger.debug(
+                    f"stat -c command returned: {size_str}, trying alternative method"
+                )
+
                 def _get_size_wc():
                     result = container.exec_run(f"wc -c < {cpg_path}")
-                    return result.output.decode('utf-8', errors='ignore').strip()
-                
+                    return result.output.decode("utf-8", errors="ignore").strip()
+
                 size_str = await loop.run_in_executor(None, _get_size_wc)
                 return int(size_str)
-                
+
         except Exception as e:
             logger.error(f"Failed to extract file size: {e}")
             return None
@@ -305,11 +299,7 @@ class CPGGenerator:
             await self.close_session(session_id)
 
     async def stream_logs(
-        self,
-        session_id: str,
-        source_path: str,
-        language: str,
-        output_path: str
+        self, session_id: str, source_path: str, language: str, output_path: str
     ) -> AsyncIterator[str]:
         """Generate CPG and stream logs"""
         try:
@@ -317,32 +307,37 @@ class CPGGenerator:
             if not container_id:
                 yield f"ERROR: No container found for session {session_id}\n"
                 return
-                
+
             container = self.docker_client.containers.get(container_id)
-            
+
             # Get the Joern command for the language
             if language not in self.LANGUAGE_COMMANDS:
                 yield f"ERROR: Unsupported language: {language}\n"
                 return
-            
+
             base_cmd = self.LANGUAGE_COMMANDS[language]
             joern_cmd = await self._find_joern_executable(container, base_cmd)
             command_parts = [f"{joern_cmd} {source_path} -o {output_path}"]
 
             # Apply exclusions for languages that support them
-            if language in self.config.languages_with_exclusions and self.config.exclusion_patterns:
+            if (
+                language in self.config.languages_with_exclusions
+                and self.config.exclusion_patterns
+            ):
                 # Use exclusion patterns from configuration
-                combined_regex = "|".join(f"({pattern})" for pattern in self.config.exclusion_patterns)
+                combined_regex = "|".join(
+                    f"({pattern})" for pattern in self.config.exclusion_patterns
+                )
                 command_parts.append(f'--exclude-regex "{combined_regex}"')
-            
+
             command = " ".join(command_parts)
-            
+
             # Execute command and stream output
             exec_result = container.exec_run(command, stream=True, workdir="/workspace")
-            
+
             for line in exec_result.output:
-                yield line.decode('utf-8', errors='ignore')
-                
+                yield line.decode("utf-8", errors="ignore")
+
         except Exception as e:
             logger.error(f"Failed to stream logs: {e}")
             yield f"ERROR: {str(e)}\n"

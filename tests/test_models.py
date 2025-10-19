@@ -1,21 +1,24 @@
 """
 Tests for data models
 """
-import pytest
+
 from datetime import datetime
+
+import pytest
+
 from src.models import (
+    Config,
+    CPGConfig,
+    JoernConfig,
+    QueryConfig,
+    QueryResult,
+    RedisConfig,
+    ServerConfig,
     Session,
+    SessionConfig,
     SessionStatus,
     SourceType,
-    QueryResult,
-    Config,
-    ServerConfig,
-    RedisConfig,
-    SessionConfig,
-    CPGConfig,
-    QueryConfig,
     StorageConfig,
-    JoernConfig
 )
 
 
@@ -28,7 +31,7 @@ class TestSession:
             id="test-id",
             source_type="github",
             source_path="https://github.com/user/repo",
-            language="python"
+            language="python",
         )
 
         assert session.id == "test-id"
@@ -53,7 +56,7 @@ class TestSession:
             status="ready",
             container_id="container-123",
             cpg_path="/path/to/cpg.bin",
-            error_message="Test error"
+            error_message="Test error",
         )
 
         data = session.to_dict()
@@ -82,7 +85,7 @@ class TestSession:
             "created_at": "2023-01-01T12:00:00",
             "last_accessed": "2023-01-01T12:30:00",
             "error_message": None,
-            "metadata": {"key": "value"}
+            "metadata": {"key": "value"},
         }
 
         session = Session.from_dict(data)
@@ -105,11 +108,7 @@ class TestQueryResult:
 
     def test_query_result_creation(self):
         """Test basic query result creation"""
-        result = QueryResult(
-            success=True,
-            data=[{"name": "test"}],
-            execution_time=1.5
-        )
+        result = QueryResult(success=True, data=[{"name": "test"}], execution_time=1.5)
 
         assert result.success is True
         assert result.data == [{"name": "test"}]
@@ -119,11 +118,7 @@ class TestQueryResult:
 
     def test_query_result_with_error(self):
         """Test query result with error"""
-        result = QueryResult(
-            success=False,
-            error="Query failed",
-            execution_time=0.5
-        )
+        result = QueryResult(success=False, error="Query failed", execution_time=0.5)
 
         assert result.success is False
         assert result.data is None
@@ -133,10 +128,7 @@ class TestQueryResult:
     def test_query_result_to_dict(self):
         """Test query result serialization"""
         result = QueryResult(
-            success=True,
-            data=[{"name": "test"}],
-            execution_time=1.5,
-            row_count=1
+            success=True, data=[{"name": "test"}], execution_time=1.5, row_count=1
         )
 
         data = result.to_dict()
@@ -169,11 +161,7 @@ class TestConfigModels:
 
     def test_server_config(self):
         """Test ServerConfig creation"""
-        config = ServerConfig(
-            host="127.0.0.1",
-            port=8080,
-            log_level="DEBUG"
-        )
+        config = ServerConfig(host="127.0.0.1", port=8080, log_level="DEBUG")
 
         assert config.host == "127.0.0.1"
         assert config.port == 8080
@@ -181,12 +169,7 @@ class TestConfigModels:
 
     def test_redis_config(self):
         """Test RedisConfig creation"""
-        config = RedisConfig(
-            host="localhost",
-            port=6379,
-            password="secret",
-            db=1
-        )
+        config = RedisConfig(host="localhost", port=6379, password="secret", db=1)
 
         assert config.host == "localhost"
         assert config.port == 6379
@@ -196,11 +179,7 @@ class TestConfigModels:
 
     def test_session_config(self):
         """Test SessionConfig creation"""
-        config = SessionConfig(
-            ttl=7200,
-            idle_timeout=3600,
-            max_concurrent=50
-        )
+        config = SessionConfig(ttl=7200, idle_timeout=3600, max_concurrent=50)
 
         assert config.ttl == 7200
         assert config.idle_timeout == 3600
@@ -208,10 +187,7 @@ class TestConfigModels:
 
     def test_cpg_config(self):
         """Test CPGConfig creation"""
-        config = CPGConfig(
-            generation_timeout=1200,
-            max_repo_size_mb=1000
-        )
+        config = CPGConfig(generation_timeout=1200, max_repo_size_mb=1000)
 
         assert config.generation_timeout == 1200
         assert config.max_repo_size_mb == 1000
@@ -220,11 +196,7 @@ class TestConfigModels:
 
     def test_query_config(self):
         """Test QueryConfig creation"""
-        config = QueryConfig(
-            timeout=60,
-            cache_enabled=False,
-            cache_ttl=600
-        )
+        config = QueryConfig(timeout=60, cache_enabled=False, cache_ttl=600)
 
         assert config.timeout == 60
         assert config.cache_enabled is False
@@ -232,20 +204,14 @@ class TestConfigModels:
 
     def test_storage_config(self):
         """Test StorageConfig creation"""
-        config = StorageConfig(
-            workspace_root="/tmp/test",
-            cleanup_on_shutdown=False
-        )
+        config = StorageConfig(workspace_root="/tmp/test", cleanup_on_shutdown=False)
 
         assert config.workspace_root == "/tmp/test"
         assert config.cleanup_on_shutdown is False
 
     def test_joern_config(self):
         """Test JoernConfig creation"""
-        config = JoernConfig(
-            binary_path="/usr/local/bin/joern",
-            memory_limit="8g"
-        )
+        config = JoernConfig(binary_path="/usr/local/bin/joern", memory_limit="8g")
 
         assert config.binary_path == "/usr/local/bin/joern"
         assert config.memory_limit == "8g"
@@ -259,7 +225,7 @@ class TestConfigModels:
             sessions=SessionConfig(ttl=3600),
             cpg=CPGConfig(generation_timeout=600),
             query=QueryConfig(timeout=30),
-            storage=StorageConfig(workspace_root="/tmp/joern")
+            storage=StorageConfig(workspace_root="/tmp/joern"),
         )
 
         assert config.server.host == "0.0.0.0"

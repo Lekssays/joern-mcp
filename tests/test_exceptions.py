@@ -1,17 +1,19 @@
 """
 Tests for custom exceptions
 """
+
 import pytest
+
 from src.exceptions import (
+    CPGGenerationError,
+    DockerError,
+    GitOperationError,
     JoernMCPError,
+    QueryExecutionError,
+    ResourceLimitError,
     SessionNotFoundError,
     SessionNotReadyError,
-    CPGGenerationError,
-    QueryExecutionError,
-    DockerError,
-    ResourceLimitError,
     ValidationError,
-    GitOperationError
 )
 
 
@@ -82,7 +84,7 @@ class TestExceptions:
             DockerError("test"),
             ResourceLimitError("test"),
             ValidationError("test"),
-            GitOperationError("test")
+            GitOperationError("test"),
         ]
 
         for exc in exceptions:
@@ -99,7 +101,7 @@ class TestExceptions:
             (DockerError, "Cannot connect to Docker daemon"),
             (ResourceLimitError, "Maximum concurrent sessions reached"),
             (ValidationError, "Unsupported language: rust"),
-            (GitOperationError, "Repository not found")
+            (GitOperationError, "Repository not found"),
         ]
 
         for exc_class, message in test_cases:

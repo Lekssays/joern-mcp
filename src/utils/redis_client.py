@@ -1,9 +1,11 @@
 """
 Redis client wrapper for session management
 """
+
 import json
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
+
 import redis.asyncio as redis
 
 from ..models import RedisConfig, Session
@@ -24,7 +26,7 @@ class RedisClient:
             self.client = redis.from_url(
                 f"redis://{self.config.host}:{self.config.port}/{self.config.db}",
                 password=self.config.password,
-                decode_responses=self.config.decode_responses
+                decode_responses=self.config.decode_responses,
             )
             await self.client.ping()
             logger.info("Connected to Redis successfully")
@@ -55,7 +57,9 @@ class RedisClient:
             return Session.from_dict(session_dict)
         return None
 
-    async def update_session(self, session_id: str, updates: Dict[str, Any], ttl: int = 3600):
+    async def update_session(
+        self, session_id: str, updates: Dict[str, Any], ttl: int = 3600
+    ):
         """Update session fields"""
         session = await self.get_session(session_id)
         if session:
@@ -79,7 +83,9 @@ class RedisClient:
         key = f"session:{session_id}"
         await self.client.expire(key, ttl)
 
-    async def set_container_mapping(self, container_id: str, session_id: str, ttl: int = 3600):
+    async def set_container_mapping(
+        self, container_id: str, session_id: str, ttl: int = 3600
+    ):
         """Map container ID to session ID"""
         key = f"container:{container_id}"
         await self.client.set(key, session_id, ex=ttl)
@@ -94,13 +100,17 @@ class RedisClient:
         key = f"container:{container_id}"
         await self.client.delete(key)
 
-    async def cache_query_result(self, session_id: str, query_hash: str, result: Dict[str, Any], ttl: int = 300):
+    async def cache_query_result(
+        self, session_id: str, query_hash: str, result: Dict[str, Any], ttl: int = 300
+    ):
         """Cache query result"""
         key = f"query:{session_id}:{query_hash}"
         data = json.dumps(result)
         await self.client.set(key, data, ex=ttl)
 
-    async def get_cached_query(self, session_id: str, query_hash: str) -> Optional[Dict[str, Any]]:
+    async def get_cached_query(
+        self, session_id: str, query_hash: str
+    ) -> Optional[Dict[str, Any]]:
         """Get cached query result"""
         key = f"query:{session_id}:{query_hash}"
         data = await self.client.get(key)

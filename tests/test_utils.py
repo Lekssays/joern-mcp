@@ -1,17 +1,20 @@
 """
 Tests for utility functions
 """
+
+import importlib.util
 import os
+import sys
 import tempfile
-import pytest
 from pathlib import Path
 from unittest.mock import patch
-import importlib.util
-import sys
-from pathlib import Path
+
+import pytest
 
 # Import the utils.py file directly
-utils_spec = importlib.util.spec_from_file_location("utils", Path(__file__).parent.parent / "src" / "utils.py")
+utils_spec = importlib.util.spec_from_file_location(
+    "utils", Path(__file__).parent.parent / "src" / "utils.py"
+)
 utils_module = importlib.util.module_from_spec(utils_spec)
 sys.modules["utils"] = utils_module
 utils_spec.loader.exec_module(utils_module)
@@ -159,7 +162,8 @@ class TestCalculateLoc:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create Python files with known line counts
             py_file = Path(tmpdir, "test.py")
-            py_file.write_text("""# Comment line
+            py_file.write_text(
+                """# Comment line
 import os
 import sys
 
@@ -169,7 +173,8 @@ def hello():
 
 if __name__ == "__main__":
     hello()
-""")
+"""
+            )
 
             loc = calculate_loc(Path(tmpdir), ["python"])
             assert loc == 8  # Count of non-empty lines
@@ -179,12 +184,14 @@ if __name__ == "__main__":
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create Java file
             java_file = Path(tmpdir, "Test.java")
-            java_file.write_text("""public class Test {
+            java_file.write_text(
+                """public class Test {
     public static void main(String[] args) {
         System.out.println("Hello World");
     }
 }
-""")
+"""
+            )
 
             loc = calculate_loc(Path(tmpdir), ["java"])
             assert loc == 5

@@ -1,12 +1,15 @@
 """
 Tests for Redis client wrapper
 """
-import pytest
+
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
-from src.utils.redis_client import RedisClient
-from src.models import RedisConfig, Session
+
+import pytest
+
 from src.exceptions import ValidationError
+from src.models import RedisConfig, Session
+from src.utils.redis_client import RedisClient
 
 
 class TestRedisClient:
@@ -16,11 +19,7 @@ class TestRedisClient:
     def redis_config(self):
         """Redis configuration fixture"""
         return RedisConfig(
-            host="localhost",
-            port=6379,
-            password=None,
-            db=0,
-            decode_responses=True
+            host="localhost", port=6379, password=None, db=0, decode_responses=True
         )
 
     @pytest.fixture
@@ -47,14 +46,14 @@ class TestRedisClient:
     @pytest.mark.asyncio
     async def test_connect_success(self, redis_config, mock_redis):
         """Test successful Redis connection"""
-        with patch('src.utils.redis_client.redis.from_url', return_value=mock_redis) as mock_from_url:
+        with patch(
+            "src.utils.redis_client.redis.from_url", return_value=mock_redis
+        ) as mock_from_url:
             client = RedisClient(redis_config)
             await client.connect()
 
             mock_from_url.assert_called_once_with(
-                "redis://localhost:6379/0",
-                password=None,
-                decode_responses=True
+                "redis://localhost:6379/0", password=None, decode_responses=True
             )
             mock_redis.ping.assert_called_once()
             assert client.client == mock_redis
@@ -62,7 +61,10 @@ class TestRedisClient:
     @pytest.mark.asyncio
     async def test_connect_failure(self, redis_config):
         """Test Redis connection failure"""
-        with patch('src.utils.redis_client.redis.from_url', side_effect=Exception("Connection failed")):
+        with patch(
+            "src.utils.redis_client.redis.from_url",
+            side_effect=Exception("Connection failed"),
+        ):
             client = RedisClient(redis_config)
 
             with pytest.raises(Exception, match="Connection failed"):
@@ -82,7 +84,7 @@ class TestRedisClient:
             id="test-session",
             source_type="github",
             source_path="https://github.com/user/repo",
-            language="python"
+            language="python",
         )
 
         mock_redis.set = AsyncMock()
@@ -110,10 +112,11 @@ class TestRedisClient:
             "language": "java",
             "status": "ready",
             "created_at": "2023-01-01T12:00:00",
-            "last_accessed": "2023-01-01T12:30:00"
+            "last_accessed": "2023-01-01T12:30:00",
         }
 
         import json
+
         mock_redis.get = AsyncMock(return_value=json.dumps(session_data))
 
         session = await redis_client.get_session("test-session")
@@ -143,14 +146,17 @@ class TestRedisClient:
             "language": "python",
             "status": "initializing",
             "created_at": "2023-01-01T12:00:00",
-            "last_accessed": "2023-01-01T12:00:00"
+            "last_accessed": "2023-01-01T12:00:00",
         }
 
         import json
+
         mock_redis.get = AsyncMock(return_value=json.dumps(session_data))
         mock_redis.set = AsyncMock()
 
-        await redis_client.update_session("test-session", {"status": "ready", "language": "java"}, ttl=3600)
+        await redis_client.update_session(
+            "test-session", {"status": "ready", "language": "java"}, ttl=3600
+        )
 
         # Verify updated session was saved
         mock_redis.set.assert_called_once()
@@ -174,7 +180,9 @@ class TestRedisClient:
     @pytest.mark.asyncio
     async def test_list_sessions(self, redis_client, mock_redis):
         """Test listing all active sessions"""
-        mock_redis.smembers = AsyncMock(return_value={"session1", "session2", "session3"})
+        mock_redis.smembers = AsyncMock(
+            return_value={"session1", "session2", "session3"}
+        )
 
         sessions = await redis_client.list_sessions()
 
@@ -195,9 +203,13 @@ class TestRedisClient:
         """Test setting container mapping"""
         mock_redis.set = AsyncMock()
 
-        await redis_client.set_container_mapping("container-123", "session-456", ttl=3600)
+        await redis_client.set_container_mapping(
+            "container-123", "session-456", ttl=3600
+        )
 
-        mock_redis.set.assert_called_once_with("container:container-123", "session-456", ex=3600)
+        mock_redis.set.assert_called_once_with(
+            "container:container-123", "session-456", ex=3600
+        )
 
     @pytest.mark.asyncio
     async def test_get_session_by_container(self, redis_client, mock_redis):
@@ -224,9 +236,12 @@ class TestRedisClient:
         result = {"data": [{"name": "test"}], "row_count": 1}
 
         import json
+
         mock_redis.set = AsyncMock()
 
-        await redis_client.cache_query_result("session-123", "query-hash", result, ttl=300)
+        await redis_client.cache_query_result(
+            "session-123", "query-hash", result, ttl=300
+        )
 
         mock_redis.set.assert_called_once()
         call_args = mock_redis.set.call_args
@@ -240,6 +255,7 @@ class TestRedisClient:
         cached_result = {"data": [{"name": "test"}], "row_count": 1}
 
         import json
+
         mock_redis.get = AsyncMock(return_value=json.dumps(cached_result))
 
         result = await redis_client.get_cached_query("session-123", "query-hash")

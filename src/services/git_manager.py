@@ -1,12 +1,14 @@
 """
 Git repository manager for cloning and managing GitHub repositories
 """
+
 import asyncio
 import logging
 import os
 import shutil
-from typing import Optional, Dict
+from typing import Dict, Optional
 from urllib.parse import urlparse
+
 import git
 
 from ..exceptions import GitOperationError, ValidationError
@@ -28,37 +30,33 @@ class GitManager:
         repo_url: str,
         target_path: str,
         branch: Optional[str] = None,
-        token: Optional[str] = None
+        token: Optional[str] = None,
     ) -> str:
         """Clone a GitHub repository"""
         try:
             # Validate URL
             validate_github_url(repo_url)
-            
+
             # Parse URL and inject token if provided
             if token:
                 parsed = urlparse(repo_url)
                 auth_url = f"{parsed.scheme}://{token}@{parsed.netloc}{parsed.path}"
             else:
                 auth_url = repo_url
-            
+
             # Create target directory
             os.makedirs(target_path, exist_ok=True)
             source_path = os.path.join(target_path, "source")
-            
+
             # Clone in a thread pool (git operations are blocking)
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
-                None,
-                self._do_clone,
-                auth_url,
-                source_path,
-                branch
+                None, self._do_clone, auth_url, source_path, branch
             )
-            
+
             logger.info(f"Cloned repository {repo_url} to {source_path}")
             return source_path
-            
+
         except ValidationError:
             raise
         except Exception as e:
@@ -90,12 +88,12 @@ class GitManager:
         try:
             validate_github_url(repo_url)
             parsed = urlparse(repo_url)
-            parts = parsed.path.strip('/').split('/')
-            
+            parts = parsed.path.strip("/").split("/")
+
             return {
                 "owner": parts[0] if len(parts) > 0 else "",
                 "repo": parts[1] if len(parts) > 1 else "",
-                "url": repo_url
+                "url": repo_url,
             }
         except Exception as e:
             logger.error(f"Failed to get repository info: {e}")
@@ -106,16 +104,16 @@ class GitManager:
         try:
             validate_github_url(url)
             parsed = urlparse(url)
-            parts = parsed.path.strip('/').split('/')
-            
+            parts = parsed.path.strip("/").split("/")
+
             # Remove .git suffix if present
-            repo = parts[1].replace('.git', '') if len(parts) > 1 else ""
-            
+            repo = parts[1].replace(".git", "") if len(parts) > 1 else ""
+
             return {
                 "owner": parts[0] if len(parts) > 0 else "",
                 "repo": repo,
                 "host": parsed.netloc,
-                "scheme": parsed.scheme
+                "scheme": parsed.scheme,
             }
         except Exception as e:
             logger.error(f"Failed to parse GitHub URL: {e}")

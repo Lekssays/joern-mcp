@@ -1,20 +1,23 @@
 """
 Tests for input validation utilities
 """
-import pytest
+
 from unittest.mock import patch
+
+import pytest
+
+from src.exceptions import ValidationError
 from src.utils.validators import (
-    validate_source_type,
-    validate_language,
-    validate_session_id,
-    validate_github_url,
-    validate_local_path,
-    validate_cpgql_query,
     hash_query,
     sanitize_path,
-    validate_timeout
+    validate_cpgql_query,
+    validate_github_url,
+    validate_language,
+    validate_local_path,
+    validate_session_id,
+    validate_source_type,
+    validate_timeout,
 )
-from src.exceptions import ValidationError
 
 
 class TestValidateSourceType:
@@ -43,8 +46,19 @@ class TestValidateLanguage:
     def test_valid_languages(self):
         """Test valid programming languages"""
         valid_languages = [
-            "java", "c", "cpp", "javascript", "python", "go", "kotlin",
-            "csharp", "ghidra", "jimple", "php", "ruby", "swift"
+            "java",
+            "c",
+            "cpp",
+            "javascript",
+            "python",
+            "go",
+            "kotlin",
+            "csharp",
+            "ghidra",
+            "jimple",
+            "php",
+            "ruby",
+            "swift",
         ]
 
         for language in valid_languages:
@@ -89,7 +103,7 @@ class TestValidateSessionId:
             "not-a-uuid",
             "12345678-1234-5678-9012",  # Too short
             "12345678-1234-5678-9012-123456789012-extra",  # Too long
-            "12345678-1234-5678-g012-123456789012"  # Invalid character
+            "12345678-1234-5678-g012-123456789012",  # Invalid character
         ]
 
         for invalid_id in invalid_ids:
@@ -109,7 +123,7 @@ class TestValidateGithubUrl:
             "https://github.com/user/repo.git",
             "https://www.github.com/user/repo",
             "https://github.com/user-name/repo_name",
-            "https://github.com/user/repo/issues"
+            "https://github.com/user/repo/issues",
         ]
 
         for url in valid_urls:
@@ -122,7 +136,7 @@ class TestValidateGithubUrl:
             "https://gitlab.com/user/repo",  # Wrong domain
             "https://github.com/user",  # Missing repo
             "https://github.com/",  # Incomplete
-            "not-a-url"
+            "not-a-url",
         ]
 
         for url in invalid_urls:
@@ -135,8 +149,9 @@ class TestValidateLocalPath:
 
     def test_valid_local_path(self):
         """Test valid local path"""
-        with patch('os.path.exists', return_value=True), \
-             patch('os.path.isdir', return_value=True):
+        with patch("os.path.exists", return_value=True), patch(
+            "os.path.isdir", return_value=True
+        ):
             # Should not raise
             validate_local_path("/valid/path")
 
@@ -149,7 +164,7 @@ class TestValidateLocalPath:
 
     def test_invalid_local_path_not_exists(self):
         """Test non-existent path"""
-        with patch('os.path.exists', return_value=False):
+        with patch("os.path.exists", return_value=False):
             with pytest.raises(ValidationError) as exc_info:
                 validate_local_path("/nonexistent/path")
 
@@ -157,8 +172,9 @@ class TestValidateLocalPath:
 
     def test_invalid_local_path_not_directory(self):
         """Test path that exists but is not a directory"""
-        with patch('os.path.exists', return_value=True), \
-             patch('os.path.isdir', return_value=False):
+        with patch("os.path.exists", return_value=True), patch(
+            "os.path.isdir", return_value=False
+        ):
             with pytest.raises(ValidationError) as exc_info:
                 validate_local_path("/path/to/file.txt")
 
@@ -175,7 +191,7 @@ class TestValidateCpgqlQuery:
             "cpg.call.name('printf').l",
             "cpg.literal.code('SELECT *').l",
             "cpg.file.name.toJson",
-            "cpg.method.where(_.name('main')).l"
+            "cpg.method.where(_.name('main')).l",
         ]
 
         for query in valid_queries:
@@ -211,7 +227,7 @@ class TestValidateCpgqlQuery:
             "System.exit(0)",
             "Runtime.getRuntime.exec('rm -rf /')",
             "ProcessBuilder",
-            "java.io.File.delete"
+            "java.io.File.delete",
         ]
 
         for query in dangerous_queries:
@@ -250,11 +266,7 @@ class TestSanitizePath:
 
     def test_sanitize_path_safe(self):
         """Test sanitizing safe paths"""
-        safe_paths = [
-            "/safe/path",
-            "/another/safe/path",
-            "safe/path"
-        ]
+        safe_paths = ["/safe/path", "/another/safe/path", "safe/path"]
 
         for path in safe_paths:
             result = sanitize_path(path)
@@ -265,7 +277,7 @@ class TestSanitizePath:
         dangerous_paths = [
             "../../../etc/passwd",
             "../../../../root",
-            "..\\..\\..\\windows\\system32"
+            "..\\..\\..\\windows\\system32",
         ]
 
         for path in dangerous_paths:
