@@ -20,7 +20,8 @@ from src.exceptions import (
     ValidationError,
 )
 from src.models import Config, CPGConfig, QueryResult, Session, SessionStatus
-from src.tools.mcp_tools import get_cpg_cache_key, get_cpg_cache_path, register_tools
+from src.tools.core_tools import get_cpg_cache_key, get_cpg_cache_path
+from src.tools.mcp_tools import register_tools
 
 
 class FakeMCP:
@@ -197,7 +198,7 @@ class TestMCPTools:
             f.write("mock cpg")
 
         with patch(
-            "src.tools.mcp_tools.os.path.abspath", return_value=playground_path
+            "src.tools.core_tools.os.path.abspath", return_value=playground_path
         ), patch("os.path.exists", side_effect=lambda p: p == cpg_path), patch(
             "shutil.copy2"
         ) as mock_copy2:
@@ -493,7 +494,7 @@ class TestMCPTools:
                 '#include <stdio.h>\n\nint main() {\n    printf("Hello\\n");\n    return 0;\n}\n'
             )
 
-        with patch("src.tools.mcp_tools.os.path.abspath", return_value=temp_workspace):
+        with patch("src.tools.code_browsing_tools.os.path.abspath", return_value=temp_workspace):
             func = mcp.registered["get_method_source"]
             result = await func(session_id=ready_session.id, method_name="main")
 
@@ -969,7 +970,7 @@ class TestMCPTools:
                 '#include <stdio.h>\n\nint main() {\n    printf("Hello\\n");\n    return 0;\n}\n'
             )
 
-        with patch("src.tools.mcp_tools.os.path.abspath", return_value=temp_workspace):
+        with patch("src.tools.code_browsing_tools.os.path.abspath", return_value=temp_workspace):
             func = mcp.registered["get_code_snippet"]
             result = await func(
                 session_id=ready_session.id, filename="main.c", start_line=3, end_line=6
