@@ -12,6 +12,11 @@ redis:
 joern:
   binary_path: ${JOERN_BINARY_PATH:joern}
   memory_limit: ${JOERN_MEMORY_LIMIT:4g}
+  java_opts: ${JOERN_JAVA_OPTS:-Xmx4G -Xms2G -XX:+UseG1GC -Dfile.encoding=UTF-8}
+
+  # For large projects
+  # memory_limit: ${JOERN_MEMORY_LIMIT:16g}
+  # java_opts: ${JOERN_JAVA_OPTS:-Xmx16G -Xms8G -XX:+UseG1GC -Dfile.encoding=UTF-8}
 
 sessions:
   ttl: ${SESSION_TTL:3600}

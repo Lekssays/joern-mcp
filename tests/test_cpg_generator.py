@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from src.exceptions import CPGGenerationError
-from src.models import CPGConfig, SessionStatus
+from src.models import CPGConfig, SessionStatus, Config, JoernConfig
 from src.services.cpg_generator import CPGGenerator
 from src.services.session_manager import SessionManager
 
@@ -17,12 +17,19 @@ class TestCPGGenerator:
     """Test CPG generator functionality"""
 
     @pytest.fixture
-    def cpg_config(self):
-        """CPG configuration fixture"""
-        return CPGConfig(
-            generation_timeout=600,
-            max_repo_size_mb=500,
-            supported_languages=["java", "python", "c", "cpp"],
+    def config(self):
+        """Configuration fixture"""
+        return Config(
+            cpg=CPGConfig(
+                generation_timeout=600,
+                max_repo_size_mb=500,
+                supported_languages=["java", "python", "c", "cpp"],
+            ),
+            joern=JoernConfig(
+                binary_path="joern",
+                memory_limit="4g",
+                java_opts="-Xmx4G -Xms2G -XX:+UseG1GC -Dfile.encoding=UTF-8"
+            )
         )
 
     @pytest.fixture
@@ -31,9 +38,9 @@ class TestCPGGenerator:
         return AsyncMock(spec=SessionManager)
 
     @pytest.fixture
-    def cpg_generator(self, cpg_config, mock_session_manager):
+    def cpg_generator(self, config, mock_session_manager):
         """CPG generator fixture"""
-        generator = CPGGenerator(cpg_config, mock_session_manager)
+        generator = CPGGenerator(config, mock_session_manager)
         return generator
 
     @pytest.mark.asyncio
@@ -81,6 +88,7 @@ class TestCPGGenerator:
         assert call_kwargs["name"] == "joern-session-session-123"
         assert call_kwargs["detach"] is True
         assert "/tmp/workspace" in str(call_kwargs["volumes"])
+        assert call_kwargs["environment"]["JAVA_OPTS"] == "-Xmx16G -Xms8G -XX:+UseG1GC -Dfile.encoding=UTF-8"
 
     @pytest.mark.asyncio
     async def test_create_session_container_failure(self, cpg_generator):

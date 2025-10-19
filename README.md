@@ -401,6 +401,14 @@ curl http://localhost:4242/health
 python main.py
 ```
 
+**Loading large projects:**
+```yaml
+joern:
+  binary_path: ${JOERN_BINARY_PATH:joern}
+  memory_limit: ${JOERN_MEMORY_LIMIT:16g}
+  java_opts: ${JOERN_JAVA_OPTS:-Xmx16G -Xms8G -XX:+UseG1GC -Dfile.encoding=UTF-8}
+```
+
 **Debug logging:**
 ```bash
 export MCP_LOG_LEVEL=DEBUG

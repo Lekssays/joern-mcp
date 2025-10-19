@@ -9,7 +9,7 @@ from typing import AsyncIterator, Dict, Optional
 import docker
 
 from ..exceptions import CPGGenerationError
-from ..models import CPGConfig, SessionStatus
+from ..models import CPGConfig, SessionStatus, Config
 from .session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ class CPGGenerator:
     }
 
     def __init__(
-        self, config: CPGConfig, session_manager: Optional[SessionManager] = None
+        self, config: Config, session_manager: Optional[SessionManager] = None
     ):
         self.config = config
         self.session_manager = session_manager
@@ -67,7 +67,7 @@ class CPGGenerator:
                 "detach": True,
                 "volumes": {workspace_path: {"bind": "/workspace", "mode": "rw"}},
                 "working_dir": "/workspace",
-                "environment": {"JAVA_OPTS": "-Xmx4g"},
+                "environment": {"JAVA_OPTS": self.config.joern.java_opts},
                 "command": "tail -f /dev/null",  # Keep container running
                 "network_mode": "bridge",
             }
@@ -113,12 +113,12 @@ class CPGGenerator:
 
             # Apply exclusions for languages that support them
             if (
-                language in self.config.languages_with_exclusions
-                and self.config.exclusion_patterns
+                language in self.config.cpg.languages_with_exclusions
+                and self.config.cpg.exclusion_patterns
             ):
                 # Use exclusion patterns from configuration
                 combined_regex = "|".join(
-                    f"({pattern})" for pattern in self.config.exclusion_patterns
+                    f"({pattern})" for pattern in self.config.cpg.exclusion_patterns
                 )
                 command_parts.append(f'--exclude-regex "{combined_regex}"')
 
@@ -130,7 +130,7 @@ class CPGGenerator:
             try:
                 result = await asyncio.wait_for(
                     self._exec_command_async(container, command),
-                    timeout=self.config.generation_timeout,
+                    timeout=self.config.cpg.generation_timeout,
                 )
 
                 logger.info(f"CPG generation output:\n{result}")
@@ -156,7 +156,7 @@ class CPGGenerator:
 
             except asyncio.TimeoutError:
                 error_msg = (
-                    f"CPG generation timed out after {self.config.generation_timeout}s"
+                    f"CPG generation timed out after {self.config.cpg.generation_timeout}s"
                 )
                 logger.error(error_msg)
                 if self.session_manager:
@@ -321,12 +321,12 @@ class CPGGenerator:
 
             # Apply exclusions for languages that support them
             if (
-                language in self.config.languages_with_exclusions
-                and self.config.exclusion_patterns
+                language in self.config.cpg.languages_with_exclusions
+                and self.config.cpg.exclusion_patterns
             ):
                 # Use exclusion patterns from configuration
                 combined_regex = "|".join(
-                    f"({pattern})" for pattern in self.config.exclusion_patterns
+                    f"({pattern})" for pattern in self.config.cpg.exclusion_patterns
                 )
                 command_parts.append(f'--exclude-regex "{combined_regex}"')
 

@@ -42,6 +42,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
             joern=JoernConfig(
                 binary_path=os.getenv("JOERN_BINARY_PATH", "joern"),
                 memory_limit=os.getenv("JOERN_MEMORY_LIMIT", "4g"),
+                java_opts=os.getenv("JOERN_JAVA_OPTS", "-Xmx4G -Xms2G -XX:+UseG1GC -Dfile.encoding=UTF-8"),
             ),
             sessions=SessionConfig(
                 ttl=int(os.getenv("SESSION_TTL", "3600")),

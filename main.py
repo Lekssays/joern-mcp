@@ -54,7 +54,7 @@ async def lifespan(mcp: FastMCP):
         services['redis'] = redis_client
         services['session_manager'] = SessionManager(redis_client, config.sessions)
         services['git_manager'] = GitManager(config.storage.workspace_root)
-        services['cpg_generator'] = CPGGenerator(config.cpg, services['session_manager'])
+        services['cpg_generator'] = CPGGenerator(config, services['session_manager'])
         
         # Initialize Docker orchestrator
         services['docker'] = DockerOrchestrator()
