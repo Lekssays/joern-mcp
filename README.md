@@ -103,6 +103,7 @@ python main.py
 - **`find_taint_sources`**: Locate likely external input points (taint sources)
 - **`find_taint_sinks`**: Locate dangerous sinks where tainted data could cause vulnerabilities
 - **`find_taint_flows`**: Find dataflow paths from sources to sinks using Joern dataflow primitives
+- **`find_argument_flows`**: Find flows where the exact same expression is passed to both source and sink calls
 - **`check_method_reachability`**: Check if one method can reach another through the call graph
 - **`list_taint_paths`**: List detailed taint flow paths from sources to sinks
 - **`get_program_slice`**: Build a program slice from a specific line or call
@@ -207,6 +208,17 @@ python main.py
   }
 }
 
+# Find argument flows between function calls
+{
+  "tool": "find_argument_flows",
+  "arguments": {
+    "session_id": "abc-123-def",
+    "source_name": "validate_input",
+    "sink_name": "process_data",
+    "arg_index": 0
+  }
+}
+
 # Get detailed taint paths
 {
   "tool": "list_taint_paths",
@@ -238,6 +250,7 @@ The security analysis tools provide comprehensive vulnerability detection includ
 - Source identification: `find_taint_sources` locates external input points
 - Sink identification: `find_taint_sinks` finds dangerous operations
 - Flow analysis: `find_taint_flows` traces data from sources to sinks
+- Argument flow analysis: `find_argument_flows` finds exact expression reuse between calls
 - Path enumeration: `list_taint_paths` provides detailed propagation chains
 
 **Program Slicing:**

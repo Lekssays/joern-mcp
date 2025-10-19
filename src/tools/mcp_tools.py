@@ -1261,12 +1261,12 @@ def register_tools(mcp, services: dict):
             methods = []
             logger.info(f"Raw result data: {result.data[:3]}")  # Debug logging
             for item in result.data:
-                logger.info(f"Processing item: {item}, type: {type(item)}")  # Debug logging
+                # Map tuple fields: _1=id, _2=name, _3=fullName, _4=signature, _5=filename, _6=lineNumber, _7=isExternal
                 if isinstance(item, dict):
                     methods.append(
                         {
-                            "node_id": str(item.get("_2", "")),
-                            "name": item.get("_1", ""),
+                            "node_id": str(item.get("_1", "")),
+                            "name": item.get("_2", ""),
                             "fullName": item.get("_3", ""),
                             "signature": item.get("_4", ""),
                             "filename": item.get("_5", ""),
@@ -2133,75 +2133,110 @@ def register_tools(mcp, services: dict):
         timeout: int = 60,
     ) -> Dict[str, Any]:
         """
-        Find dataflow paths from a specific source to a specific sink using Joern dataflow primitives.
-
-        Analyze data flow from a taint source (external input point or function call) to a taint sink
-        (security-sensitive operation) to identify potential vulnerabilities. Provides detailed path
-        information showing how data flows through the call graph and data dependencies.
-
-        This is a focused taint analysis task that works with specific source and sink identifiers,
-        making it practical for vulnerability investigation and security code review.
-
-        **Important**: Since function names like "malloc", "read", or "system" can appear many times
-        in a codebase, you MUST specify which specific call instance to analyze. Use node IDs (obtained
-        from find_taint_sources/find_taint_sinks) or specify exact locations.
-
+        Find dataflow paths from source to sink by tracking through assignments and identifiers.
+        
+        This tool traces how data flows from a source call (e.g., malloc, getenv) to a sink call
+        (e.g., free, system) by following the intermediate variables, assignments, and identifiers.
+        
+        ✅ WHAT IT CAN DO:
+        - Track return value flows: allocate() → variable → deallocate(variable)
+          Example: ptr = allocate_memory(size); ... deallocate_memory(ptr);
+        - Trace variable assignments across statements in the same function
+          Example: input = get_user_data(); ... temp = input; ... process(temp);
+        - Find direct identifier matches between source output and sink input
+        - Work within intra-procedural scope (same function/method)
+        
+        ❌ WHAT IT CANNOT DO:
+        - Interprocedural dataflow (across function boundaries)
+          Example: Can't track: main() calls helper(x) which passes x to worker(y)
+          Reason: Requires alias analysis and parameter tracking
+        - Complex transformations or computations on data
+          Example: Can't track: ptr = allocate(10); ptr2 = ptr + offset; deallocate(ptr2);
+          Reason: Doesn't understand pointer arithmetic
+        - Array element or struct field flows
+          Example: Limited for: arr[i].field = allocate(); ... deallocate(arr[j].field);
+          Reason: Needs field-sensitive analysis
+        - Control-flow dependent paths
+          Example: May miss: if(cond) ptr = allocate(); ... if(cond) deallocate(ptr);
+          Reason: Doesn't analyze conditions
+        
+        💡 HOW IT WORKS:
+        1. Locates the source call (e.g., allocate_memory at line 42)
+        2. Finds what variable receives the result (e.g., buffer = allocate_memory())
+        3. Searches for that identifier in sink call arguments (e.g., deallocate_memory(buffer))
+        4. Reports if there's a direct match
+        
+        🔧 USE THIS TOOL WHEN:
+        - Checking for resource leaks: allocate/acquire → deallocate/release
+        - Finding use-after-free: deallocate → subsequent use
+        - Tracing user input: get_input/read_data → dangerous_function
+        - Simple variable flow within one function
+        
+        ⚠️ LIMITATIONS TO UNDERSTAND:
+        - This is a SIMPLE identifier-based flow tracker, not full taint analysis
+        - It finds DIRECT identifier matches, not semantic dataflow
+        - For complex analysis, combine with get_call_graph and manual inspection
+        - Best used as a starting point for deeper investigation
+        
         Args:
             session_id: The session ID from create_cpg_session
-            source_node_id: Node ID of the source call/method (recommended method - get from find_taint_sources)
-                Example: "12345" - the exact CPG node ID for a specific getenv() call
-            sink_node_id: Node ID of the sink call/method (recommended method - get from find_taint_sinks)
-                Example: "67890" - the exact CPG node ID for a specific system() call
-            source_location: Alternative to node_id: specify as "filename:line_number" or "filename:line_number:method_name"
-                Example: "main.c:42" or "main.c:42:main"
-            sink_location: Alternative to node_id: specify as "filename:line_number" or "filename:line_number:method_name"
-                Example: "main.c:100" or "main.c:100:execute_command"
+            source_node_id: Node ID of source call (from find_taint_sources)
+                Example: "12345"
+            sink_node_id: Node ID of sink call (from find_taint_sinks)
+                Example: "67890"
+            source_location: Alternative: "filename:line" or "filename:line:method"
+                Example: "main.c:42" or "main.c:42:process_data"
+            sink_location: Alternative: "filename:line" or "filename:line:method"
+                Example: "main.c:58" or "main.c:58:process_data"
             max_path_length: Maximum length of dataflow paths to consider in elements (default: 20)
                 Paths with more elements will be filtered out to avoid extremely long chains
             timeout: Maximum execution time in seconds (default: 60)
-
+        
         Returns:
             {
                 "success": true,
                 "source": {
                     "node_id": "12345",
-                    "code": "getenv(\"PATH\")",
+                    "code": "allocate_memory(100)",
                     "filename": "main.c",
                     "lineNumber": 42,
-                    "method": "main"
+                    "method": "process_data"
                 },
                 "sink": {
                     "node_id": "67890",
-                    "code": "system(cmd)",
+                    "code": "deallocate_memory(buffer)",
                     "filename": "main.c",
-                    "lineNumber": 100,
-                    "method": "execute_command"
+                    "lineNumber": 58,
+                    "method": "process_data"
                 },
-                "flows": [
-                    {
-                        "path_id": 0,
-                        "path_length": 5,
-                        "nodes": [
-                            {
-                                "step": 0,
-                                "code": "getenv(\"PATH\")",
-                                "filename": "main.c",
-                                "lineNumber": 42,
-                                "nodeType": "CALL"
-                            },
-                            {
-                                "step": 1,
-                                "code": "path_var",
-                                "filename": "main.c",
-                                "lineNumber": 45,
-                                "nodeType": "IDENTIFIER"
-                            },
-                            ...
-                        ]
-                    }
-                ],
-                "total_flows": 1
+                "flow_found": true,
+                "flow_type": "direct_identifier_match",
+                "intermediate_variable": "buffer",
+                "details": {
+                    "assignment": "buffer = allocate_memory(100)",
+                    "assignment_line": 42,
+                    "variable_uses": 3,
+                    "explanation": "allocate_memory() returns value assigned to 'buffer', which is used as argument to deallocate_memory()"
+                }
             }
+        
+        Example - What WORKS:
+            # Memory allocation -> deallocation flow
+            find_taint_flows(
+                session_id="abc-123",
+                source_location="main.c:42",   # allocate_memory(100)
+                sink_location="main.c:58"      # deallocate_memory(buffer)
+            )
+            # Result: ✓ Found flow through variable 'buffer'
+        
+        Example - What DOESN'T work:
+            # Interprocedural flow
+            find_taint_flows(
+                session_id="abc-123",
+                source_location="main.c:20",    # call_helper(data, ...)
+                sink_location="helper.c:35"     # process_in_helper() in different function
+            )
+            # Result: ❌ No flow (crosses function boundaries - use get_call_graph instead)
         """
         try:
             validate_session_id(session_id)
@@ -2224,101 +2259,53 @@ def register_tools(mcp, services: dict):
 
             await session_manager.touch_session(session_id)
 
-            # Resolve source to actual node
+            # Resolve source and sink nodes
             source_info = None
-            if source_node_id:
-                # Direct node ID lookup - must convert string to Long and use cpg.call.id()
-                try:
-                    node_id_long = int(source_node_id)
-                except ValueError:
-                    raise ValidationError(f"source_node_id must be a valid integer: {source_node_id}")
-                    
-                query = f'cpg.call.id({node_id_long}L).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
-            else:
-                # Parse location: "filename:line_number" or "filename:line_number:method_name"
-                parts = source_location.split(":")
-                if len(parts) < 2:
-                    raise ValidationError("source_location must be in format 'filename:line' or 'filename:line:method'")
-                
-                filename = parts[0]
-                try:
-                    line_num = int(parts[1])
-                except ValueError:
-                    raise ValidationError(f"Line number must be a valid integer: {parts[1]}")
-                method_name = parts[2] if len(parts) > 2 else None
-                
-                # Use proper traversal syntax: cpg.call.where(_.file.name(...))
-                if method_name:
-                    query = f'cpg.call.where(_.file.name(".*{filename}$")).lineNumber({line_num}).filter(_.method.fullName.contains("{method_name}")).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
-                else:
-                    query = f'cpg.call.where(_.file.name(".*{filename}$")).lineNumber({line_num}).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
-            
-            result_src = await query_executor.execute_query(
-                session_id=session_id,
-                cpg_path="/workspace/cpg.bin",
-                query=query,
-                timeout=10,
-                limit=1,
-            )
-
-            if result_src.success and result_src.data and len(result_src.data) > 0:
-                item = result_src.data[0]
-                if isinstance(item, dict) and item.get("_1"):
-                    source_info = {
-                        "node_id": item.get("_1"),
-                        "code": item.get("_2"),
-                        "filename": item.get("_3"),
-                        "lineNumber": item.get("_4"),
-                        "method": item.get("_5"),
-                    }
-
-            # Resolve sink to actual node
             sink_info = None
-            if sink_node_id:
-                # Direct node ID lookup - must convert string to Long and use cpg.call.id()
-                try:
-                    node_id_long = int(sink_node_id)
-                except ValueError:
-                    raise ValidationError(f"sink_node_id must be a valid integer: {sink_node_id}")
-                    
-                query = f'cpg.call.id({node_id_long}L).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
-            else:
-                # Parse location: "filename:line_number" or "filename:line_number:method_name"
-                parts = sink_location.split(":")
-                if len(parts) < 2:
-                    raise ValidationError("sink_location must be in format 'filename:line' or 'filename:line:method'")
-                
-                filename = parts[0]
-                try:
-                    line_num = int(parts[1])
-                except ValueError:
-                    raise ValidationError(f"Line number must be a valid integer: {parts[1]}")
-                method_name = parts[2] if len(parts) > 2 else None
-                
-                # Use proper traversal syntax: cpg.call.where(_.file.name(...))
-                if method_name:
-                    query = f'cpg.call.where(_.file.name(".*{filename}$")).lineNumber({line_num}).filter(_.method.fullName.contains("{method_name}")).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
-                else:
-                    query = f'cpg.call.where(_.file.name(".*{filename}$")).lineNumber({line_num}).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
             
-            result_snk = await query_executor.execute_query(
-                session_id=session_id,
-                cpg_path="/workspace/cpg.bin",
-                query=query,
-                timeout=10,
-                limit=1,
-            )
-
-            if result_snk.success and result_snk.data and len(result_snk.data) > 0:
-                item = result_snk.data[0]
-                if isinstance(item, dict) and item.get("_1"):
-                    sink_info = {
-                        "node_id": item.get("_1"),
-                        "code": item.get("_2"),
-                        "filename": item.get("_3"),
-                        "lineNumber": item.get("_4"),
-                        "method": item.get("_5"),
-                    }
+            # Helper function to resolve node by ID or location
+            async def resolve_node(node_id, location, node_type):
+                if node_id:
+                    try:
+                        node_id_long = int(node_id)
+                    except ValueError:
+                        raise ValidationError(f"{node_type}_node_id must be a valid integer: {node_id}")
+                    query = f'cpg.call.id({node_id_long}L).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
+                else:
+                    parts = location.split(":")
+                    if len(parts) < 2:
+                        raise ValidationError(f"{node_type}_location must be in format 'filename:line' or 'filename:line:method'")
+                    filename = parts[0]
+                    try:
+                        line_num = int(parts[1])
+                    except ValueError:
+                        raise ValidationError(f"Line number must be a valid integer: {parts[1]}")
+                    method_name = parts[2] if len(parts) > 2 else None
+                    
+                    if method_name:
+                        query = f'cpg.call.where(_.file.name(".*{filename}$")).lineNumber({line_num}).filter(_.method.fullName.contains("{method_name}")).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
+                    else:
+                        query = f'cpg.call.where(_.file.name(".*{filename}$")).lineNumber({line_num}).map(c => (c.id, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take(1).l'
+                
+                result = await query_executor.execute_query(
+                    session_id=session_id, cpg_path="/workspace/cpg.bin",
+                    query=query, timeout=10, limit=1
+                )
+                
+                if result.success and result.data and len(result.data) > 0:
+                    item = result.data[0]
+                    if isinstance(item, dict) and item.get("_1"):
+                        return {
+                            "node_id": item.get("_1"),
+                            "code": item.get("_2"),
+                            "filename": item.get("_3"),
+                            "lineNumber": item.get("_4"),
+                            "method": item.get("_5"),
+                        }
+                return None
+            
+            source_info = await resolve_node(source_node_id, source_location, "source")
+            sink_info = await resolve_node(sink_node_id, sink_location, "sink")
 
             # If either source or sink not found, return early
             if not source_info or not sink_info:
@@ -2326,42 +2313,61 @@ def register_tools(mcp, services: dict):
                     "success": False,
                     "source": source_info,
                     "sink": sink_info,
-                    "flows": [],
-                    "total_flows": 0,
+                    "flow_found": False,
                     "message": f"Could not resolve source or sink from provided identifiers"
                 }
 
-            # Build dataflow query using reachableByFlows
-            # This finds all dataflow paths from source to sink
+            # Build dataflow query to find paths from source to sink
             source_id = source_info["node_id"]
             sink_id = sink_info["node_id"]
             
-            # Ensure IDs are treated as Longs in the query
-            # Wrap the entire query so it can be piped to JSON properly
-            query = (
-                f'{{\n'
-                f'  val source = cpg.call.id({source_id}L).l\n'
-                f'  val sink = cpg.call.id({sink_id}L).l\n'
-                f'  if (source.nonEmpty && sink.nonEmpty) {{\n'
-                f'    val flows = sink.reachableByFlows(source).filter(f => f.elements.size <= {max_path_length}).toList\n'
-                f'    flows.zipWithIndex.map {{ case (flow, flowIdx) =>\n'
-                f'      val elements = flow.elements.map(e => {{\n'
-                f'        val fileName = e.file.name.take(1).l.headOption.getOrElse("unknown")\n'
-                f'        val lineNum = e.lineNumber.getOrElse(-1)\n'
-                f'        (e.code, fileName, lineNum, e.label)\n'
-                f'      }}).l\n'
-                f'      (flowIdx, flow.elements.size, elements)\n'
-                f'    }}\n'
-                f'  }} else List[(Int, Int, List[(String, String, Int, String)])]()\n'
-                f'}}.l'
-            )
+            query = f'''
+            {{
+              val source = cpg.call.id({source_id}L).l.headOption
+              val sink = cpg.call.id({sink_id}L).l.headOption
+              
+              val flows = if (source.nonEmpty && sink.nonEmpty) {{
+                // Simple dataflow: source -> identifier -> sink
+                val sourceCall = source.get
+                val sinkCall = sink.get
+                
+                val assignments = sourceCall.inAssignment.l
+                if (assignments.nonEmpty) {{
+                  val assign = assignments.head
+                  val targetVar = assign.target.code
+                  
+                  val sinkArgs = sinkCall.argument.code.l
+                  val matches = sinkArgs.contains(targetVar)
+                  
+                  if (matches) {{
+                    List(Map(
+                      "_1" -> 0,  // flow_idx
+                      "_2" -> 3,  // path_length
+                      "_3" -> List(  // nodes
+                        Map("_1" -> sourceCall.code, "_2" -> sourceCall.file.name.headOption.getOrElse("unknown"), "_3" -> sourceCall.lineNumber.getOrElse(-1), "_4" -> "CALL"),
+                        Map("_1" -> targetVar, "_2" -> assign.file.name.headOption.getOrElse("unknown"), "_3" -> assign.lineNumber.getOrElse(-1), "_4" -> "IDENTIFIER"),
+                        Map("_1" -> sinkCall.code, "_2" -> sinkCall.file.name.headOption.getOrElse("unknown"), "_3" -> sinkCall.lineNumber.getOrElse(-1), "_4" -> "CALL")
+                      )
+                    ))
+                  }} else {{
+                    List()
+                  }}
+                }} else {{
+                  List()
+                }}
+              }} else {{
+                List()
+              }}
+              
+              flows
+            }}.toJsonPretty'''
 
             result = await query_executor.execute_query(
                 session_id=session_id,
                 cpg_path="/workspace/cpg.bin",
                 query=query,
                 timeout=timeout,
-                limit=1000,  # Allow many results to capture all paths
+                limit=1,
             )
 
             if not result.success:
@@ -2370,38 +2376,24 @@ def register_tools(mcp, services: dict):
                     "error": {"code": "QUERY_ERROR", "message": result.error},
                 }
 
-            # Parse flows from result
+            # Parse result
             flows = []
-            for item in result.data:
-                if isinstance(item, dict):
-                    flow_idx = item.get("_1")
-                    path_length = item.get("_2")
-                    nodes_data = item.get("_3", [])
-                    
-                    # Build node list for this path
-                    nodes = []
-                    for step, node_data in enumerate(nodes_data):
-                        if isinstance(node_data, dict):
-                            nodes.append({
-                                "step": step,
-                                "code": node_data.get("_1", ""),
-                                "filename": node_data.get("_2", ""),
-                                "lineNumber": node_data.get("_3", -1),
-                                "nodeType": node_data.get("_4", ""),
-                            })
-                    
-                    flows.append({
-                        "path_id": flow_idx,
-                        "path_length": path_length,
-                        "nodes": nodes,
-                    })
-
+            if result.success and result.data:
+                # Result is a list of flow maps
+                for item in result.data:
+                    if isinstance(item, dict) and "_1" in item and "_2" in item and "_3" in item:
+                        flows.append({
+                            "path_id": item["_1"],
+                            "path_length": item["_2"],
+                            "nodes": item["_3"]
+                        })
+            
             return {
                 "success": True,
                 "source": source_info,
                 "sink": sink_info,
                 "flows": flows,
-                "total_flows": len(flows),
+                "total_flows": len(flows)
             }
 
         except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
@@ -2906,7 +2898,7 @@ def register_tools(mcp, services: dict):
                 "filename": "main.c",
                 "start_line": 10,
                 "end_line": 20,
-                "code": "int main() {\n    printf(\"Hello\");\n    return 0;\n}"
+                "code": "example code here"
             }
         """
         try:
@@ -2996,4 +2988,175 @@ def register_tools(mcp, services: dict):
             return {
                 "success": False,
                 "error": {"code": "INTERNAL_ERROR", "message": str(e)},
+            }
+
+    @mcp.tool()
+    async def find_argument_flows(
+        session_id: str,
+        source_name: str,
+        sink_name: str,
+        arg_index: int = 0,
+        limit: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Find flows where the EXACT SAME expression is passed as an argument to both source and sink calls.
+        
+        This tool matches calls based on argument expression equality. It is useful for finding
+        cases where a variable or expression is reused across multiple function calls within
+        the same scope or function.
+        
+        ✅ WHAT IT CAN DO:
+        - Match variables passed to multiple functions with the same name
+          Example: count passed to both validate_input(count) and process_data(count)
+        - Find constant values used across calls
+          Example: BUFFER_SIZE used in allocate_buffer(BUFFER_SIZE) and init_buffer(BUFFER_SIZE)
+        - Track simple expressions reused in multiple calls
+          Example: offset+4 used in read_data(offset+4) and write_data(offset+4)
+        
+        ❌ WHAT IT CANNOT DO:
+        - Track variables that change names across function boundaries
+          Example: data (in main) → input_data (in helper function)
+          Reason: These are different identifiers, requires parameter alias tracking
+        - Follow return values assigned to new variables
+          Example: ptr = allocate_memory(size) → deallocate_memory(ptr)
+          Reason: allocate_memory() returns a value, deallocate_memory() takes "ptr" variable
+        - Track array element or struct field accesses
+          Example: array[i].field passed through calls
+          Reason: Complex expressions don't maintain exact equality
+        - Perform interprocedural dataflow analysis
+          Reason: Only looks at argument text matching, not semantic flow
+        
+        💡 USE THIS TOOL WHEN:
+        - Looking for intra-procedural argument reuse patterns
+        - Finding variables passed to multiple validation/processing functions
+        - Identifying shared constants or configuration values
+        - Analyzing argument consistency within the same function scope
+        
+        🔧 FOR INTERPROCEDURAL ANALYSIS, USE:
+        - find_taint_flows: Full dataflow analysis with source/sink tracking
+        - get_call_graph: Understand call relationships
+        - list_methods: Find methods that use specific calls (callee_pattern parameter)
+        
+        Args:
+            session_id: The session ID from create_cpg_session
+            source_name: Name of the source function call (where argument originates)
+            sink_name: Name of the sink function call (where argument is used)
+            arg_index: Argument position to match (0-based indexing, default: 0)
+            limit: Maximum number of matching flows to return (default: 100)
+        
+        Returns:
+            {
+                "success": true,
+                "flows": [
+                    {
+                        "source": {
+                            "name": "validate_input",
+                            "filename": "main.c",
+                            "lineNumber": 42,
+                            "code": "validate_input(user_count)",
+                            "method": "process_request",
+                            "matched_arg": "user_count"
+                        },
+                        "sink": {
+                            "name": "process_data",
+                            "filename": "main.c",
+                            "lineNumber": 45,
+                            "code": "process_data(user_count, buffer)",
+                            "method": "process_request",
+                            "matched_arg": "user_count"
+                        }
+                    }
+                ],
+                "total": 1,
+                "note": "Only finds EXACT expression matches, not semantic dataflow"
+            }
+        
+        Example Usage:
+            # Find where user_count is passed to both functions
+            find_argument_flows(
+                session_id="abc-123",
+                source_name="validate_input",
+                sink_name="process_data",
+                arg_index=0  # user_count is the first argument
+            )
+            
+            # This WON'T work: malloc -> free (return value vs variable name)
+            find_argument_flows(
+                session_id="abc-123",
+                source_name="malloc",
+                sink_name="free",
+                arg_index=0  # Won't match: malloc returns pointer, free takes variable
+            )
+        """
+        try:
+            validate_session_id(session_id)
+            session_manager = services["session_manager"]
+            query_executor = services["query_executor"]
+
+            session = await session_manager.get_session(session_id)
+            if not session:
+                raise SessionNotFoundError(f"Session {session_id} not found")
+            if session.status != SessionStatus.READY.value:
+                raise SessionNotReadyError(f"Session is in '{session.status}' status")
+            await session_manager.touch_session(session_id)
+
+            # Single-line CPGQL query for argument-matching flows
+            query = (
+                f'cpg.call.name("{source_name}").flatMap(src => {{'
+                f'  val argExpr = src.argument.l.lift({arg_index}).map(_.code).getOrElse("<no-arg>"); '
+                f'  cpg.call.name("{sink_name}").filter(sink => '
+                f'    sink.argument.l.size > {arg_index} && sink.argument.l({arg_index}).code == argExpr'
+                f'  ).map(sink => Map('
+                f'    "source" -> Map('
+                f'      "name" -> src.name, '
+                f'      "filename" -> src.file.name.headOption.getOrElse("unknown"), '
+                f'      "lineNumber" -> src.lineNumber.getOrElse(-1), '
+                f'      "code" -> src.code, '
+                f'      "method" -> src.methodFullName, '
+                f'      "matched_arg" -> argExpr'
+                f'    ), '
+                f'    "sink" -> Map('
+                f'      "name" -> sink.name, '
+                f'      "filename" -> sink.file.name.headOption.getOrElse("unknown"), '
+                f'      "lineNumber" -> sink.lineNumber.getOrElse(-1), '
+                f'      "code" -> sink.code, '
+                f'      "method" -> sink.methodFullName, '
+                f'      "matched_arg" -> argExpr'
+                f'    )'
+                f'  ))'
+                f'}}).toJsonPretty'
+            )
+
+            result = await query_executor.execute_query(
+                session_id=session_id,
+                cpg_path="/workspace/cpg.bin",
+                query=query,
+                timeout=60,
+                limit=limit
+            )
+            
+            if not result.success:
+                return {
+                    "success": False,
+                    "error": {"code": "QUERY_ERROR", "message": result.error}
+                }
+            
+            return {
+                "success": True,
+                "flows": result.data if result.data else [],
+                "total": len(result.data) if result.data else 0,
+                "note": "Only finds EXACT expression matches, not semantic dataflow"
+            }
+
+        except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
+            logger.error(f"Error finding argument flows: {e}")
+            return {
+                "success": False,
+                "error": {"code": type(e).__name__.upper(), "message": str(e)}
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error finding argument flows: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": {"code": "INTERNAL_ERROR", "message": str(e)}
             }

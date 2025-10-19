@@ -215,6 +215,218 @@ async def demonstrate_joern_mcp():
         else:
             logger.error(f"  ❌ Failed to get code snippet: {snippet_dict.get('error')}")
         
+        # 6.6. Test find_argument_flows
+        logger.info("\n🔗 Testing find_argument_flows...")
+        
+        # Test 1: A case that SHOULD work - src_count passed to multiple functions
+        logger.info("\n  Test 1: Finding src_count argument flow (should work)")
+        logger.info("    Looking for: validate_iovec_lengths -> safe_copy_data")
+        flow_result1 = await client.call_tool("find_argument_flows", {
+            "session_id": session_id,
+            "source_name": "validate_iovec_lengths",
+            "sink_name": "safe_copy_data",
+            "arg_index": 1  # src_count is at index 1
+        })
+        
+        flow_dict1 = extract_tool_result(flow_result1)
+        
+        if flow_dict1.get("success"):
+            total = flow_dict1.get("total", 0)
+            logger.info(f"  ✅ Found {total} argument flow(s)")
+            
+            if flow_dict1.get("flows"):
+                for i, flow in enumerate(flow_dict1["flows"][:3], 1):
+                    src = flow.get("source", {})
+                    sink = flow.get("sink", {})
+                    matched_arg = src.get("matched_arg", "N/A")
+                    
+                    logger.info(f"\n    Flow {i}:")
+                    logger.info(f"      Matched argument: '{matched_arg}'")
+                    logger.info(f"      Source: {src.get('name')} at line {src.get('lineNumber')}")
+                    logger.info(f"        Code: {src.get('code', 'N/A')}")
+                    logger.info(f"      Sink: {sink.get('name')} at line {sink.get('lineNumber')}")
+                    logger.info(f"        Code: {sink.get('code', 'N/A')}")
+                
+                if total > 3:
+                    logger.info(f"      ... and {total - 3} more flows")
+            
+            if flow_dict1.get("note"):
+                logger.info(f"\n  ℹ️  Note: {flow_dict1['note']}")
+        else:
+            logger.error(f"  ❌ Test 1 failed: {flow_dict1.get('error')}")
+        
+        # Test 2: A case that WON'T work - malloc -> free (return value vs variable)
+        logger.info("\n  Test 2: Finding malloc -> free flow (demonstrates limitation)")
+        logger.info("    This should find 0 matches (different expressions)")
+        flow_result2 = await client.call_tool("find_argument_flows", {
+            "session_id": session_id,
+            "source_name": "malloc",
+            "sink_name": "free",
+            "arg_index": 0
+        })
+        
+        flow_dict2 = extract_tool_result(flow_result2)
+        
+        if flow_dict2.get("success"):
+            total = flow_dict2.get("total", 0)
+            if total == 0:
+                logger.info(f"  ✅ Correctly found 0 flows (as expected)")
+                logger.info(f"     Reason: malloc returns a value, free takes a variable name")
+                logger.info(f"     Tip: Use find_taint_flows for this kind of analysis")
+            else:
+                logger.info(f"  ⚠️  Unexpectedly found {total} flow(s)")
+        else:
+            logger.error(f"  ❌ Test 2 failed: {flow_dict2.get('error')}")
+        
+        # Test 3: Another working case - dst_count
+        logger.info("\n  Test 3: Finding dst_count argument flow")
+        logger.info("    Looking for: validate_iovec_lengths -> safe_copy_data")
+        flow_result3 = await client.call_tool("find_argument_flows", {
+            "session_id": session_id,
+            "source_name": "validate_iovec_lengths",
+            "sink_name": "safe_copy_data",
+            "arg_index": 1  # For the second call, dst_count is at index 1
+        })
+        
+        flow_dict3 = extract_tool_result(flow_result3)
+        
+        if flow_dict3.get("success"):
+            total = flow_dict3.get("total", 0)
+            logger.info(f"  ✅ Found {total} argument flow(s) for dst_count")
+        else:
+            logger.error(f"  ❌ Test 3 failed: {flow_dict3.get('error')}")
+        
+        # Testing find_taint_flows
+        logger.info("\n" + "="*80)
+        logger.info("🔍 Testing find_taint_flows (identifier-based dataflow tracking)")
+        logger.info("="*80)
+        
+        # First, find some taint sources and sinks
+        logger.info("\n  Finding taint sources (malloc calls)...")
+        sources_result = await client.call_tool("find_taint_sources", {
+            "session_id": session_id,
+            "source_patterns": ["malloc"],
+            "limit": 10
+        })
+        sources_dict = extract_tool_result(sources_result)
+        
+        malloc_sources = []
+        if sources_dict.get("success") and sources_dict.get("sources"):
+            malloc_sources = sources_dict["sources"]
+            logger.info(f"  ✅ Found {len(malloc_sources)} malloc calls")
+            for i, src in enumerate(malloc_sources[:3], 1):
+                logger.info(f"    {i}. {src.get('code')} at line {src.get('lineNumber')} (ID: {src.get('node_id')})")
+        
+        logger.info("\n  Finding taint sinks (free calls)...")
+        sinks_result = await client.call_tool("find_taint_sinks", {
+            "session_id": session_id,
+            "sink_patterns": ["free"],
+            "limit": 10
+        })
+        sinks_dict = extract_tool_result(sinks_result)
+        
+        free_sinks = []
+        if sinks_dict.get("success") and sinks_dict.get("sinks"):
+            free_sinks = sinks_dict["sinks"]
+            logger.info(f"  ✅ Found {len(free_sinks)} free calls")
+            for i, sink in enumerate(free_sinks[:3], 1):
+                logger.info(f"    {i}. {sink.get('code')} at line {sink.get('lineNumber')} (ID: {sink.get('node_id')})")
+        
+        # Test 1: malloc -> free flow using node IDs
+        if malloc_sources and free_sinks:
+            logger.info("\n  Test 1: malloc -> free flow using node IDs")
+            logger.info(f"    Source: {malloc_sources[0].get('code')} (ID: {malloc_sources[0].get('node_id')})")
+            logger.info(f"    Sink: {free_sinks[0].get('code')} (ID: {free_sinks[0].get('node_id')})")
+            
+            taint_result1 = await client.call_tool("find_taint_flows", {
+                "session_id": session_id,
+                "source_node_id": str(malloc_sources[0].get('node_id')),
+                "sink_node_id": str(free_sinks[0].get('node_id')),
+                "timeout": 30
+            })
+            
+            taint_dict1 = extract_tool_result(taint_result1)
+            
+            if taint_dict1.get("success"):
+                flow_found = taint_dict1.get("flow_found", False)
+                if flow_found:
+                    logger.info(f"  ✅ Flow detected!")
+                    logger.info(f"     Flow type: {taint_dict1.get('flow_type')}")
+                    logger.info(f"     Intermediate variable: '{taint_dict1.get('intermediate_variable')}'")
+                    
+                    details = taint_dict1.get("details", {})
+                    if details:
+                        logger.info(f"     Assignment: {details.get('assignment')}")
+                        logger.info(f"     Assignment line: {details.get('assignment_line')}")
+                        logger.info(f"     Variable uses: {details.get('variable_uses')}")
+                        logger.info(f"     Explanation: {details.get('explanation')}")
+                else:
+                    logger.info(f"  ℹ️  No flow found between these specific malloc and free calls")
+                    logger.info(f"     (This is expected if they use different variables)")
+            else:
+                logger.error(f"  ❌ Test 1 failed: {taint_dict1.get('error')}")
+        
+        # Test 2: Try with location-based specification
+        if malloc_sources and free_sinks:
+            logger.info("\n  Test 2: malloc -> free flow using location specification")
+            src_file = malloc_sources[0].get('filename', 'core.c').split('/')[-1]
+            src_line = malloc_sources[0].get('lineNumber')
+            sink_file = free_sinks[0].get('filename', 'core.c').split('/')[-1]
+            sink_line = free_sinks[0].get('lineNumber')
+            
+            logger.info(f"    Source location: {src_file}:{src_line}")
+            logger.info(f"    Sink location: {sink_file}:{sink_line}")
+            
+            taint_result2 = await client.call_tool("find_taint_flows", {
+                "session_id": session_id,
+                "source_location": f"{src_file}:{src_line}",
+                "sink_location": f"{sink_file}:{sink_line}",
+                "timeout": 30
+            })
+            
+            taint_dict2 = extract_tool_result(taint_result2)
+            
+            if taint_dict2.get("success"):
+                flow_found = taint_dict2.get("flow_found", False)
+                if flow_found:
+                    logger.info(f"  ✅ Flow detected!")
+                    logger.info(f"     Variable: '{taint_dict2.get('intermediate_variable')}'")
+                else:
+                    logger.info(f"  ℹ️  No flow (expected if different variables)")
+            else:
+                logger.error(f"  ❌ Test 2 failed: {taint_dict2.get('error')}")
+        
+        # Test 3: Try multiple pairs to find a matching flow
+        logger.info("\n  Test 3: Searching for matching malloc->free flows...")
+        flows_found = 0
+        for i, src in enumerate(malloc_sources[:3]):
+            for j, sink in enumerate(free_sinks[:3]):
+                logger.info(f"    Testing pair {i*3+j+1}/9: {src.get('code')} -> {sink.get('code')}")
+                taint_result = await client.call_tool("find_taint_flows", {
+                    "session_id": session_id,
+                    "source_node_id": str(src.get('node_id')),
+                    "sink_node_id": str(sink.get('node_id')),
+                    "timeout": 15
+                })
+                
+                taint_dict = extract_tool_result(taint_result)
+                
+                if taint_dict.get("success") and taint_dict.get("flow_found"):
+                    flows_found += 1
+                    var = taint_dict.get('intermediate_variable', 'N/A')
+                    logger.info(f"    ✓ Flow {flows_found}: {src.get('code')} -> '{var}' -> {sink.get('code')}")
+                else:
+                    details = taint_dict.get('details', {})
+                    logger.info(f"       No flow. Reason: {details.get('explanation', 'unknown')}")
+        
+        if flows_found > 0:
+            logger.info(f"  ✅ Found {flows_found} matching dataflow(s)")
+        else:
+            logger.info(f"  ℹ️  No matching flows found in sample (may need to test more pairs)")
+        
+        logger.info("\n  💡 Note: find_taint_flows tracks identifier-based flows within functions")
+        logger.info("     For interprocedural flows, use get_call_graph and manual analysis")
+        
         # 7. List all sessions
         logger.info("\n📋 Listing sessions...")
         sessions_result = await client.call_tool("list_sessions")
