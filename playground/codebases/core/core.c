@@ -101,6 +101,40 @@ static void print_iovec_info(const struct iovec *iov, size_t count)
 	}
 }
 
+#define MAX_BUFFER_SIZE 1024
+
+static int process_buffer_with_check(char *buffer, size_t len, int index)
+{
+	if (index >= MAX_BUFFER_SIZE) {
+		return -1;
+	}
+	
+	buffer[index] = 'X';
+	return 0;
+}
+
+static int process_buffer_no_check(char *buffer, size_t len, int index)
+{
+	buffer[index] = 'Y';
+	
+	if (index >= len) {
+		return -1;
+	}
+	return 0;
+}
+
+static void demonstrate_bounds_checking()
+{
+	char safe_buffer[MAX_BUFFER_SIZE];
+	char unsafe_buffer[100];
+	
+	// Safe call with prior check
+	process_buffer_with_check(safe_buffer, MAX_BUFFER_SIZE, 50);
+	
+	// Unsafe call - no check before access
+	process_buffer_no_check(unsafe_buffer, 100, 75);
+}
+
 static int perform_io_operation(struct iovec *src_iov, size_t src_count, struct iovec *dst_iov, size_t dst_count)
 {
 	if (validate_iovec_lengths(src_iov, src_count) != 0) return -1;

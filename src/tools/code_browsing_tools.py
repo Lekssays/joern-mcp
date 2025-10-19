@@ -1145,3 +1145,151 @@ def register_code_browsing_tools(mcp, services: dict):
                 "success": False,
                 "error": {"code": "INTERNAL_ERROR", "message": str(e)},
             }
+    @mcp.tool()
+    async def find_bounds_checks(
+        session_id: str, buffer_access_location: str
+    ) -> Dict[str, Any]:
+        """
+        Find bounds checks near buffer access.
+
+        Verify if buffer accesses have corresponding bounds checks by analyzing
+        comparison operations involving the index variable. This helps identify
+        potential buffer overflow vulnerabilities where bounds checks are missing
+        or happen after the access.
+
+        Args:
+            session_id: The session ID from create_cpg_session
+            buffer_access_location: Location of buffer access in format "filename:line"
+                                  (e.g., "parser.c:3393")
+
+        Returns:
+            {
+                "success": true,
+                "buffer_access": {
+                    "line": 3393,
+                    "code": "buf[len++] = c",
+                    "buffer": "buf",
+                    "index": "len++"
+                },
+                "bounds_checks": [
+                    {
+                        "line": 3396,
+                        "code": "if (len >= XML_MAX_NAMELEN)",
+                        "checked_variable": "len",
+                        "bound": "XML_MAX_NAMELEN",
+                        "operator": ">=",
+                        "position": "AFTER_ACCESS"
+                    }
+                ],
+                "check_before_access": false,
+                "check_after_access": true
+            }
+        """
+        try:
+            validate_session_id(session_id)
+
+            # Parse the buffer access location
+            if ":" not in buffer_access_location:
+                raise ValidationError(
+                    "buffer_access_location must be in format 'filename:line'"
+                )
+
+            filename, line_str = buffer_access_location.rsplit(":", 1)
+            try:
+                line_num = int(line_str)
+            except ValueError:
+                raise ValidationError(f"Invalid line number: {line_str}")
+
+            session_manager = services["session_manager"]
+            query_executor = services["query_executor"]
+
+            session = await session_manager.get_session(session_id)
+            if not session:
+                raise SessionNotFoundError(f"Session {session_id} not found")
+
+            if session.status != SessionStatus.READY.value:
+                raise SessionNotReadyError(f"Session is in '{session.status}' status")
+
+            await session_manager.touch_session(session_id)
+
+            # Build the Joern query to find buffer access and bounds checks
+            # Use raw string to avoid escaping issues
+            # Wrap in braces to avoid REPL line-by-line interpretation issues
+            query_template = r"""{
+def escapeJson(s: String): String = {
+s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+}
+val bufferAccessOpt = cpg.call.name("<operator>.indirectIndexAccess").where(_.file.name(".*FILENAME_PLACEHOLDER")).lineNumber(LINE_NUM_PLACEHOLDER).headOption
+bufferAccessOpt match {
+case Some(bufferAccess) =>
+val accessLine = bufferAccess.lineNumber.getOrElse(0)
+val args = bufferAccess.argument.l
+val bufferName = if (args.nonEmpty) args.head.code else "unknown"
+val indexExpr = if (args.size > 1) args.last.code else "unknown"
+val indexVar = indexExpr.replaceAll("[^a-zA-Z0-9_].*", "")
+val method = bufferAccess.method
+val comparisons = method.call.name("<operator>.(lessThan|greaterThan|lessEqualsThan|greaterEqualsThan)").filter { cmp => val args = cmp.argument.code.l; args.exists(_.contains(indexVar)) }.l
+val boundsChecksJson = comparisons.map { cmp =>
+val cmpLine = cmp.lineNumber.getOrElse(0)
+val position = if (cmpLine < accessLine) "BEFORE_ACCESS" else if (cmpLine > accessLine) "AFTER_ACCESS" else "SAME_LINE"
+val args = cmp.argument.l
+val leftArg = if (args.nonEmpty) args.head.code else "?"
+val rightArg = if (args.size > 1) args.last.code else "?"
+val operator = cmp.name match { case "<operator>.lessThan" => "<"; case "<operator>.greaterThan" => ">"; case "<operator>.lessEqualsThan" => "<="; case "<operator>.greaterEqualsThan" => ">="; case _ => "?" }
+"{\"line\":" + cmpLine + ",\"code\":\"" + escapeJson(cmp.code) + "\",\"checked_variable\":\"" + escapeJson(leftArg) + "\",\"bound\":\"" + escapeJson(rightArg) + "\",\"operator\":\"" + operator + "\",\"position\":\"" + position + "\"}"
+}.mkString(",")
+val checkBefore = comparisons.exists { cmp => val cmpLine = cmp.lineNumber.getOrElse(0); cmpLine < accessLine }
+val checkAfter = comparisons.exists { cmp => val cmpLine = cmp.lineNumber.getOrElse(0); cmpLine > accessLine }
+"{\"success\":true,\"buffer_access\":{\"line\":" + accessLine + ",\"code\":\"" + escapeJson(bufferAccess.code) + "\",\"buffer\":\"" + escapeJson(bufferName) + "\",\"index\":\"" + escapeJson(indexExpr) + "\"},\"bounds_checks\":[" + boundsChecksJson + "],\"check_before_access\":" + checkBefore + ",\"check_after_access\":" + checkAfter + "}"
+case None =>
+"{\"success\":false,\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"No buffer access found at FILENAME_PLACEHOLDER:LINE_NUM_PLACEHOLDER\"}}"
+}
+}"""
+            
+            query = query_template.replace("FILENAME_PLACEHOLDER", filename).replace("LINE_NUM_PLACEHOLDER", str(line_num))
+
+            result = await query_executor.execute_query(
+                session_id=session_id,
+                cpg_path="/workspace/cpg.bin",
+                query=query,
+                timeout=30,
+            )
+
+            if not result.success:
+                return {
+                    "success": False,
+                    "error": {"code": "QUERY_ERROR", "message": result.error},
+                }
+
+            # Parse the JSON result
+            import json
+
+            if isinstance(result.data, list) and len(result.data) > 0:
+                result_data = result.data[0]
+                
+                # Handle JSON string response from upickle.write
+                if isinstance(result_data, str):
+                    return json.loads(result_data)
+                else:
+                    return result_data
+            else:
+                return {
+                    "success": False,
+                    "error": {
+                        "code": "NO_RESULT",
+                        "message": "Query returned no results",
+                    },
+                }
+
+        except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
+            logger.error(f"Error finding bounds checks: {e}")
+            return {
+                "success": False,
+                "error": {"code": type(e).__name__.upper(), "message": str(e)},
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": {"code": "INTERNAL_ERROR", "message": str(e)},
+            }

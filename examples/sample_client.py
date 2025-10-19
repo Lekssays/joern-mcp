@@ -470,6 +470,95 @@ async def demonstrate_joern_mcp():
             cleaned = cleanup_dict.get("cleaned_up", 0)
             logger.info(f"  ✅ Cleaned up {cleaned} queries")
         
+        # 10.5 Test find_bounds_checks
+        logger.info("\n" + "="*80)
+        logger.info("🛡️  Testing find_bounds_checks (buffer overflow detection)")
+        logger.info("="*80)
+        
+        # Test 1: Buffer access with check BEFORE (safe)
+        logger.info("\n  Test 1: Buffer access with bounds check BEFORE access (safe)")
+        logger.info("    Function: process_buffer_with_check at line 112")
+        
+        bounds_result1 = await client.call_tool("find_bounds_checks", {
+            "session_id": session_id,
+            "buffer_access_location": "core.c:112"
+        })
+        
+        bounds_dict1 = extract_tool_result(bounds_result1)
+        
+        if bounds_dict1.get("success"):
+            buffer_access = bounds_dict1.get("buffer_access", {})
+            bounds_checks = bounds_dict1.get("bounds_checks", [])
+            check_before = bounds_dict1.get("check_before_access", False)
+            check_after = bounds_dict1.get("check_after_access", False)
+            
+            logger.info(f"  ✅ Analysis complete")
+            logger.info(f"     Buffer access: {buffer_access.get('code')} at line {buffer_access.get('line')}")
+            logger.info(f"     Buffer: '{buffer_access.get('buffer')}' Index: '{buffer_access.get('index')}'")
+            logger.info(f"     Bounds checks found: {len(bounds_checks)}")
+            
+            for check in bounds_checks:
+                position = check.get('position')
+                logger.info(f"\n     Check at line {check.get('line')} ({position}):")
+                logger.info(f"       Condition: {check.get('code')}")
+                logger.info(f"       Checked: {check.get('checked_variable')} {check.get('operator')} {check.get('bound')}")
+            
+            logger.info(f"\n     ✓ Check before access: {check_before}")
+            logger.info(f"     ✓ Check after access: {check_after}")
+            
+            if check_before:
+                logger.info("     ✅ SAFE: Bounds checked before buffer access")
+            elif check_after:
+                logger.info("     ⚠️  UNSAFE: Bounds checked AFTER buffer access (too late!)")
+            else:
+                logger.info("     ❌ VULNERABLE: No bounds check found")
+        else:
+            logger.error(f"  ❌ Test 1 failed: {bounds_dict1.get('error')}")
+        
+        # Test 2: Buffer access with check AFTER (unsafe)
+        logger.info("\n  Test 2: Buffer access with bounds check AFTER access (unsafe)")
+        logger.info("    Function: process_buffer_no_check at line 118")
+        
+        bounds_result2 = await client.call_tool("find_bounds_checks", {
+            "session_id": session_id,
+            "buffer_access_location": "core.c:118"
+        })
+        
+        bounds_dict2 = extract_tool_result(bounds_result2)
+        
+        if bounds_dict2.get("success"):
+            buffer_access = bounds_dict2.get("buffer_access", {})
+            bounds_checks = bounds_dict2.get("bounds_checks", [])
+            check_before = bounds_dict2.get("check_before_access", False)
+            check_after = bounds_dict2.get("check_after_access", False)
+            
+            logger.info(f"  ✅ Analysis complete")
+            logger.info(f"     Buffer access: {buffer_access.get('code')} at line {buffer_access.get('line')}")
+            logger.info(f"     Buffer: '{buffer_access.get('buffer')}' Index: '{buffer_access.get('index')}'")
+            logger.info(f"     Bounds checks found: {len(bounds_checks)}")
+            
+            for check in bounds_checks:
+                position = check.get('position')
+                logger.info(f"\n     Check at line {check.get('line')} ({position}):")
+                logger.info(f"       Condition: {check.get('code')}")
+                logger.info(f"       Checked: {check.get('checked_variable')} {check.get('operator')} {check.get('bound')}")
+            
+            logger.info(f"\n     ✓ Check before access: {check_before}")
+            logger.info(f"     ✓ Check after access: {check_after}")
+            
+            if check_before:
+                logger.info("     ✅ SAFE: Bounds checked before buffer access")
+            elif check_after:
+                logger.info("     ⚠️  UNSAFE: Bounds checked AFTER buffer access (too late!)")
+            else:
+                logger.info("     ❌ VULNERABLE: No bounds check found")
+        else:
+            logger.error(f"  ❌ Test 2 failed: {bounds_dict2.get('error')}")
+        
+        logger.info("\n  💡 Note: find_bounds_checks helps identify buffer overflow vulnerabilities")
+        logger.info("     by verifying if array accesses have corresponding bounds checks")
+        logger.info("     and whether those checks happen BEFORE or AFTER the access.")
+        
         # 11. Close session
         logger.info(f"\n🔒 Closing session {session_id}...")
         close_result = await client.call_tool("close_session", {
