@@ -795,61 +795,16 @@ class TestMCPTools:
 
         fake_services["session_manager"].get_session.return_value = ready_session
 
-        # Mock target call query (using node ID)
-        target_result = QueryResult(
+        # Mock the single inline Scala query that returns JSON directly
+        json_result = QueryResult(
             success=True,
             data=[
-                {
-                    "_1": "12345",  # node_id
-                    "_2": "memcpy",  # name
-                    "_3": "memcpy(buf, src, size)",  # code
-                    "_4": "main.c",  # filename
-                    "_5": 42,  # lineNumber
-                    "_6": "vulnerable_function",  # method
-                    "_7": ["buf", "src", "size"],  # arguments
-                }
+                '{"success":true,"slice":{"target_call":{"node_id":"12345","name":"memcpy","code":"memcpy(buf, src, size)","filename":"main.c","lineNumber":42,"method":"vulnerable_function","arguments":["buf","src","size"]},"dataflow":[{"variable":"buf","code":"buf","filename":"main.c","lineNumber":10,"method":"vulnerable_function"}],"control_dependencies":[{"code":"if (size > 0)","filename":"main.c","lineNumber":35,"method":"vulnerable_function"}]},"total_nodes":3}'
             ],
             row_count=1,
         )
 
-        # Mock dataflow queries for each argument (buf, src, size)
-        dataflow_result_buf = QueryResult(
-            success=True,
-            data=[
-                {
-                    "_1": "buf",  # code (identifier)
-                    "_2": "main.c",  # filename
-                    "_3": 10,  # lineNumber
-                    "_4": "vulnerable_function",  # method
-                }
-            ],
-            row_count=1,
-        )
-
-        dataflow_result_src = QueryResult(success=True, data=[], row_count=0)
-        dataflow_result_size = QueryResult(success=True, data=[], row_count=0)
-
-        # Mock control flow query
-        control_result = QueryResult(
-            success=True,
-            data=[
-                {
-                    "_1": "if (size > 0)",  # code
-                    "_2": "main.c",  # filename
-                    "_3": 35,  # lineNumber
-                    "_4": "vulnerable_function",  # method
-                }
-            ],
-            row_count=1,
-        )
-
-        fake_services["query_executor"].execute_query.side_effect = [
-            target_result,  # Target call lookup
-            dataflow_result_buf,  # Dataflow for "buf"
-            dataflow_result_src,  # Dataflow for "src"
-            dataflow_result_size,  # Dataflow for "size"
-            control_result,  # Control dependencies
-        ]
+        fake_services["query_executor"].execute_query.return_value = json_result
 
         func = mcp.registered["get_program_slice"]
         result = await func(
@@ -873,30 +828,16 @@ class TestMCPTools:
 
         fake_services["session_manager"].get_session.return_value = ready_session
 
-        # Mock target call query (using location)
-        target_result = QueryResult(
+        # Mock the single inline Scala query that returns JSON directly
+        json_result = QueryResult(
             success=True,
             data=[
-                {
-                    "_1": "67890",  # node_id
-                    "_2": "system",  # name
-                    "_3": "system(cmd)",  # code
-                    "_4": "main.c",  # filename
-                    "_5": 100,  # lineNumber
-                    "_6": "execute_cmd",  # method
-                    "_7": ["cmd"],  # arguments
-                }
+                '{"success":true,"slice":{"target_call":{"node_id":"67890","name":"system","code":"system(cmd)","filename":"main.c","lineNumber":100,"method":"execute_cmd","arguments":["cmd"]},"dataflow":[],"control_dependencies":[]},"total_nodes":1}'
             ],
             row_count=1,
         )
 
-        # Mock control flow query
-        control_result = QueryResult(success=True, data=[], row_count=0)
-
-        fake_services["query_executor"].execute_query.side_effect = [
-            target_result,
-            control_result,
-        ]
+        fake_services["query_executor"].execute_query.return_value = json_result
 
         func = mcp.registered["get_program_slice"]
         result = await func(

@@ -784,162 +784,186 @@ def register_taint_analysis_tools(mcp, services: dict):
 
             await session_manager.touch_session(session_id)
 
-            # Step 1: Resolve target call node
-            target_call = None
-
-            if node_id:
-                # Direct node ID lookup - most efficient and unambiguous
-                query = (
-                    f'cpg.id({
-                        node_id}).map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), '
-                    f"c.lineNumber.getOrElse(-1), c.method.name, c.argument.code.l)).headOption"
-                )
-            else:
-                # Parse location string to find call
+            # Parse location if provided
+            filename = None
+            line_num = None
+            call_name = None
+            
+            if location:
                 parts = location.split(":")
                 if len(parts) < 2:
                     raise ValidationError(
                         "location must be in format 'filename:line' or 'filename:line:callname'"
                     )
-
                 filename = parts[0]
-                line_num = parts[1]
-                call_name = parts[2] if len(parts) > 2 else None
+                try:
+                    line_num = int(parts[1])
+                except ValueError:
+                    raise ValidationError(f"Invalid line number in location: {parts[1]}")
+                call_name = parts[2] if len(parts) > 2 else ""
 
-                # Build query to find call at location
-                if call_name:
-                    query = (
-                        f'cpg.file.name(".*{re.escape(filename)
-                                            }.*").call.name("{call_name}").lineNumber({line_num})'
-                        f'.map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), '
-                        f"c.lineNumber.getOrElse(-1), c.method.name, c.argument.code.l)).headOption"
-                    )
-                else:
-                    query = (
-                        f'cpg.file.name(".*{re.escape(filename)
-                                            }.*").call.lineNumber({line_num})'
-                        f'.map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), '
-                        f"c.lineNumber.getOrElse(-1), c.method.name, c.argument.code.l)).headOption"
-                    )
+            # Build inline Scala query that creates JSON directly
+            query_template = r"""{
+def escapeJson(s: String): String = {
+  s.replace("\\", "\\\\")
+   .replace("\"", "\\\"")
+   .replace("\n", "\\n")
+   .replace("\r", "\\r")
+   .replace("\t", "\\t")
+}
 
+val useNodeId = USE_NODE_ID_PLACEHOLDER
+val targetNodeId = "NODE_ID_PLACEHOLDER"
+val targetFilename = "FILENAME_PLACEHOLDER"
+val targetLine = LINE_NUM_PLACEHOLDER
+val targetCallName = "CALL_NAME_PLACEHOLDER"
+val includeDataflow = INCLUDE_DATAFLOW_PLACEHOLDER
+val includeControlFlow = INCLUDE_CONTROL_FLOW_PLACEHOLDER
+
+// Step 1: Find the target call
+val targetCallOpt = if (useNodeId) {
+  cpg.call.id(targetNodeId.toLong).headOption
+} else {
+  val candidateCalls = cpg.file.name(".*" + targetFilename + ".*")
+    .ast.isCall
+    .lineNumber(targetLine)
+    .l
+  
+  if (targetCallName.nonEmpty) {
+    candidateCalls.name(targetCallName).headOption
+  } else {
+    candidateCalls.headOption
+  }
+}
+
+val resultJson = targetCallOpt match {
+  case Some(call) =>
+    val callNodeId = call.id.toString
+    val callName = call.name
+    val callCode = escapeJson(call.code)
+    val callFilename = escapeJson(call.file.name.headOption.getOrElse("unknown"))
+    val callLineNumber = call.lineNumber.getOrElse(-1)
+    val callMethod = escapeJson(call.method.name)
+    val callArguments = call.argument.code.l
+    
+    val argsJson = callArguments.map(arg => "\"" + escapeJson(arg) + "\"").mkString(",")
+    val targetCallJson = "{\"node_id\":\"" + callNodeId + "\",\"name\":\"" + callName + "\",\"code\":\"" + callCode + "\",\"filename\":\"" + callFilename + "\",\"lineNumber\":" + callLineNumber + ",\"method\":\"" + callMethod + "\",\"arguments\":[" + argsJson + "]}"
+    
+    // Step 2: Collect dataflow dependencies
+    val dataflowList = scala.collection.mutable.ListBuffer[String]()
+    
+    if (includeDataflow) {
+      callArguments.foreach { arg =>
+        val cleanArg = arg.trim().replaceAll("\"", "")
+        
+        if (cleanArg.nonEmpty && 
+            !cleanArg.matches("\\d+") && 
+            !cleanArg.startsWith("(") && 
+            !cleanArg.startsWith("0x")) {
+          
+          val identifiers = cpg.identifier.name(cleanArg).l.take(10)
+          
+          identifiers.foreach { id =>
+            val idCode = escapeJson(id.code)
+            val idFilename = escapeJson(id.file.name.headOption.getOrElse("unknown"))
+            val idLineNumber = id.lineNumber.getOrElse(-1)
+            val idMethod = escapeJson(id.method.name)
+            
+            val dataflowJson = "{\"variable\":\"" + cleanArg + "\",\"code\":\"" + idCode + "\",\"filename\":\"" + idFilename + "\",\"lineNumber\":" + idLineNumber + ",\"method\":\"" + idMethod + "\"}"
+            dataflowList += dataflowJson
+          }
+        }
+      }
+    }
+    
+    val dataflowJson = dataflowList.take(20).mkString(",")
+    
+    // Step 3: Collect control dependencies
+    val controlDepsList = scala.collection.mutable.ListBuffer[String]()
+    
+    if (includeControlFlow) {
+      val controlDeps = call.controlledBy.dedup.take(20).l
+      
+      controlDeps.foreach { ctrl =>
+        val ctrlCode = escapeJson(ctrl.code)
+        val ctrlFilename = escapeJson(ctrl.file.name.headOption.getOrElse("unknown"))
+        val ctrlLineNumber = ctrl.lineNumber.getOrElse(-1)
+        val ctrlMethod = escapeJson(ctrl.method.name)
+        
+        val controlJson = "{\"code\":\"" + ctrlCode + "\",\"filename\":\"" + ctrlFilename + "\",\"lineNumber\":" + ctrlLineNumber + ",\"method\":\"" + ctrlMethod + "\"}"
+        controlDepsList += controlJson
+      }
+    }
+    
+    val controlDepsJson = controlDepsList.mkString(",")
+    
+    val totalNodes = 1 + dataflowList.size + controlDepsList.size
+    
+    "{\"success\":true,\"slice\":{\"target_call\":" + targetCallJson + ",\"dataflow\":[" + dataflowJson + "],\"control_dependencies\":[" + controlDepsJson + "]},\"total_nodes\":" + totalNodes + "}"
+    
+  case None =>
+    val errorMsg = if (useNodeId) {
+      s"Call not found: node_id=$targetNodeId, location=null"
+    } else {
+      val locStr = if (targetCallName.nonEmpty) {
+        s"$targetFilename:$targetLine:$targetCallName"
+      } else {
+        s"$targetFilename:$targetLine"
+      }
+      s"Call not found: node_id=null, location=$locStr"
+    }
+    "{\"success\":false,\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"" + errorMsg + "\"}}"
+}
+
+resultJson
+}"""
+
+            # Replace placeholders
+            use_node_id = "true" if node_id else "false"
+            query = (
+                query_template
+                .replace("USE_NODE_ID_PLACEHOLDER", use_node_id)
+                .replace("NODE_ID_PLACEHOLDER", node_id if node_id else "")
+                .replace("FILENAME_PLACEHOLDER", filename if filename else "")
+                .replace("LINE_NUM_PLACEHOLDER", str(line_num) if line_num else "-1")
+                .replace("CALL_NAME_PLACEHOLDER", call_name if call_name else "")
+                .replace("INCLUDE_DATAFLOW_PLACEHOLDER", "true" if include_dataflow else "false")
+                .replace("INCLUDE_CONTROL_FLOW_PLACEHOLDER", "true" if include_control_flow else "false")
+            )
+
+            # Execute the query
             result = await query_executor.execute_query(
                 session_id=session_id,
                 cpg_path="/workspace/cpg.bin",
                 query=query,
-                timeout=10,
-                limit=1,
+                timeout=timeout,
             )
 
-            if not result.success or not result.data or not result.data[0].get("_1"):
+            if not result.success:
+                return {
+                    "success": False,
+                    "error": {"code": "QUERY_ERROR", "message": result.error},
+                }
+
+            # Parse the JSON result (same as get_data_dependencies)
+            import json
+
+            if isinstance(result.data, list) and len(result.data) > 0:
+                result_data = result.data[0]
+
+                # Handle JSON string response
+                if isinstance(result_data, str):
+                    return json.loads(result_data)
+                else:
+                    return result_data
+            else:
                 return {
                     "success": False,
                     "error": {
-                        "code": "NOT_FOUND",
-                        "message": f"Call not found: node_id={node_id}, location={location}",
+                        "code": "NO_RESULT",
+                        "message": "Query returned no results",
                     },
                 }
-
-            item = result.data[0]
-            target_call = {
-                "node_id": item.get("_1"),
-                "name": item.get("_2", ""),
-                "code": item.get("_3", ""),
-                "filename": item.get("_4", ""),
-                "lineNumber": item.get("_5", -1),
-                "method": item.get("_6", ""),
-                "arguments": item.get("_7", []),
-            }
-
-            slice_result = {
-                "target_call": target_call,
-                "dataflow": [],
-                "control_dependencies": [],
-            }
-
-            # Step 2: Get dataflow for arguments
-            if include_dataflow and target_call["arguments"]:
-                for arg in target_call["arguments"]:
-                    # Clean up argument
-                    clean_arg = arg.strip().replace('"', "")
-                    if (
-                        not clean_arg
-                        or clean_arg.isdigit()
-                        or clean_arg.startswith("(")
-                        or clean_arg.startswith("0x")
-                    ):
-                        continue
-
-                    # Find identifiers with this name and their definitions
-                    dataflow_query = (
-                        f'cpg.identifier.name("{
-                            re.escape(clean_arg)}").l.take(10).map(id => '
-                        f'(id.code, id.file.name.headOption.getOrElse("unknown"), '
-                        f"id.lineNumber.getOrElse(-1), id.method.name))"
-                    )
-
-                    dataflow_result = await query_executor.execute_query(
-                        session_id=session_id,
-                        cpg_path="/workspace/cpg.bin",
-                        query=dataflow_query,
-                        timeout=15,
-                        limit=20,
-                    )
-
-                    if dataflow_result.success and dataflow_result.data:
-                        for dflow_item in dataflow_result.data[
-                            :5
-                        ]:  # Limit to 5 per argument
-                            if isinstance(dflow_item, dict):
-                                slice_result["dataflow"].append(
-                                    {
-                                        "variable": clean_arg,
-                                        "code": dflow_item.get("_1", ""),
-                                        "filename": dflow_item.get("_2", ""),
-                                        "lineNumber": dflow_item.get("_3", -1),
-                                        "method": dflow_item.get("_4", ""),
-                                    }
-                                )
-
-            # Step 3: Get control dependencies
-            if include_control_flow:
-                # Query using node ID for precise control dependency lookup
-                control_query = (
-                    f'cpg.id({target_call["node_id"]}).controlledBy.map(ctrl => '
-                    f'(ctrl.code, ctrl.file.name.headOption.getOrElse("unknown"), '
-                    f"ctrl.lineNumber.getOrElse(-1), ctrl.method.name)).dedup.take(20)"
-                )
-
-                control_result = await query_executor.execute_query(
-                    session_id=session_id,
-                    cpg_path="/workspace/cpg.bin",
-                    query=control_query,
-                    timeout=15,
-                    limit=20,
-                )
-
-                if control_result.success and control_result.data:
-                    for ctrl_item in control_result.data:
-                        if isinstance(ctrl_item, dict):
-                            slice_result["control_dependencies"].append(
-                                {
-                                    "code": ctrl_item.get("_1", ""),
-                                    "filename": ctrl_item.get("_2", ""),
-                                    "lineNumber": ctrl_item.get("_3", -1),
-                                    "method": ctrl_item.get("_4", ""),
-                                }
-                            )
-
-            total_nodes = (
-                1  # target call
-                + len(slice_result["dataflow"])
-                + len(slice_result["control_dependencies"])
-            )
-
-            return {
-                "success": True,
-                "slice": slice_result,
-                "total_nodes": total_nodes,
-            }
 
         except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
             logger.error(f"Error getting program slice: {e}")
