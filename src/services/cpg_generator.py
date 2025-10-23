@@ -106,6 +106,44 @@ class CPGGenerator:
             cpg_output_path = "/workspace/cpg.bin"
             base_cmd = self.LANGUAGE_COMMANDS[language]
             joern_cmd = await self._find_joern_executable(container, base_cmd)
+            
+            # Compute Java options to pass to Joern. Prefer an explicit
+            # configuration value, but if the container has a memory limit set
+            # use that to tune -Xmx to avoid Java OOMs inside constrained
+            # containers. Joern script accepts Java opts prefixed with -J.
+            java_opts = self.config.joern.java_opts
+
+            try:
+                # Inspect container to find memory limit (in bytes). A value of
+                # 0 usually means no limit.
+                container_inspect = container.attrs
+                mem_limit = 0
+                host_config = container_inspect.get("HostConfig", {})
+                if host_config:
+                    mem_limit = host_config.get("Memory", 0) or 0
+
+                # If mem_limit is set and reasonable, compute -Xmx as 75% of it
+                if mem_limit and mem_limit > 0:
+                    # Convert bytes to megabytes
+                    mem_mb = int(mem_limit / (1024 * 1024))
+                    xmx_mb = max(256, int(mem_mb * 0.75))
+                    # Build Java opts using Xmx and a conservative Xms (half of Xmx)
+                    xms_mb = max(128, int(xmx_mb / 2))
+                    java_opts = f"-Xmx{int(xmx_mb)}M -Xms{int(xms_mb)}M -XX:+UseG1GC -Dfile.encoding=UTF-8"
+                    logger.info(
+                        f"Computed java opts from container memory {mem_mb}MB: {java_opts}"
+                    )
+                else:
+                    # If no container memory limit, fall back to configured opts
+                    java_opts = java_opts or self.config.joern.java_opts
+            except Exception:
+                # If anything goes wrong while inspecting the container,
+                # fall back to configured java opts
+                java_opts = java_opts or self.config.joern.java_opts
+
+            if java_opts:
+                java_flags = " ".join(f"-J{opt}" for opt in java_opts.split())
+                joern_cmd = f"{joern_cmd} {java_flags}"
 
             # Build command with exclusions for various languages to focus on core
             # functionality
@@ -133,9 +171,33 @@ class CPGGenerator:
                     timeout=self.config.cpg.generation_timeout,
                 )
 
-                logger.info(f"CPG generation output:\n{result}")
+                logger.info(f"CPG generation output:\n{result[:2000]}")
 
-                # Validate CPG was created
+                # Known non-fatal warning tokens from Joern
+                non_fatal_tokens = [
+                    "FieldAccessLinkerPass",
+                    "ReachingDefPass",
+                    "The graph has been modified",
+                    "WARN",
+                    "Skipping.",
+                ]
+
+                # If the command produced a non-zero exit, the container.exec_run
+                # wrapper returns the output string; rely on file validation to
+                # determine real success. However, if the output contains fatal
+                # error indicators (like 'ERROR' or 'Exception'), fail fast.
+                if any("ERROR" in result or "Exception" in result for _ in [1]):
+                    # Check whether the 'ERROR' lines look fatal (not just Joern WARN)
+                    if "ERROR:" in result or "Exception" in result:
+                        logger.error(f"CPG generation reported fatal errors:\n{result[:2000]}")
+                        error_msg = "Joern reported fatal errors during CPG generation"
+                        if self.session_manager:
+                            await self.session_manager.update_status(
+                                session_id, SessionStatus.ERROR.value, error_msg
+                            )
+                        raise CPGGenerationError(error_msg)
+
+                # Validate CPG was created on disk; this is the real success check
                 if await self._validate_cpg_async(container, cpg_output_path):
                     if self.session_manager:
                         await self.session_manager.update_session(
@@ -146,8 +208,10 @@ class CPGGenerator:
                     logger.info(f"CPG generation completed for session {session_id}")
                     return cpg_output_path
                 else:
+                    # If file is missing, provide output context but don't choke on
+                    # known warning-only logs
                     error_msg = "CPG file was not created"
-                    logger.error(error_msg)
+                    logger.error(f"{error_msg}: {result[:2000]}")
                     if self.session_manager:
                         await self.session_manager.update_status(
                             session_id, SessionStatus.ERROR.value, error_msg

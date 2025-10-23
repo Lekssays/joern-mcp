@@ -47,6 +47,7 @@ class QueryExecutor:
         self.docker_client: Optional[docker.DockerClient] = None
         self.session_containers: Dict[str, str] = {}  # session_id -> container_id
         self.session_cpgs: Dict[str, str] = {}
+        self.session_shells: Dict[str, Any] = {}  # session_id -> persistent shell exec instance
         self.query_status: Dict[str, Dict[str, Any]] = {}  # query_id -> status info
 
     async def initialize(self):
@@ -494,19 +495,61 @@ echo 'importCpg("{cpg_path}")' | {joern_cmd}
                     f"Failed to create CPG loading script: {error_output}"
                 )
 
-            # Execute the script
+            # Execute the script and treat Joern warnings as non-fatal
             load_result = container.exec_run(["/bin/bash", "/tmp/load_cpg.sh"])
 
-            if load_result.exit_code != 0:
-                error_msg = (
-                    load_result.output.decode("utf-8", errors="ignore")
-                    if load_result.output
-                    else "No output"
-                )
-                logger.error(f"Failed to load CPG: {error_msg}")
-                raise QueryExecutionError(f"Failed to load CPG: {error_msg}")
+            output = (
+                load_result.output.decode("utf-8", errors="ignore")
+                if load_result.output
+                else ""
+            )
 
-            logger.info(f"CPG loaded successfully for session {session_id}")
+            # Known non-fatal warning patterns from Joern/overlays
+            non_fatal_patterns = [
+                "FieldAccessLinkerPass",
+                "ReachingDefPass",
+                "The graph has been modified",
+                "Skipping.",
+                "WARN",
+            ]
+
+            # If exit code is non-zero, check whether output only contains
+            # non-fatal warnings. If there are other messages, treat as fatal.
+            if load_result.exit_code != 0:
+                # If every non-empty line contains at least one non-fatal token,
+                # consider it a warning-only failure and proceed.
+                lines = [l.strip() for l in output.splitlines() if l.strip()]
+                if lines:
+                    fatal_lines = [
+                        l
+                        for l in lines
+                        if not any(tok in l for tok in non_fatal_patterns)
+                    ]
+                    if fatal_lines:
+                        logger.error(
+                            f"Failed to load CPG (fatal): exit {load_result.exit_code}: {output}"
+                        )
+                        raise QueryExecutionError(
+                            f"Failed to load CPG: exit {load_result.exit_code}: {output}"
+                        )
+                    else:
+                        # Only warnings found; log and continue
+                        logger.warning(
+                            f"CPG load returned non-zero exit but only warnings: {output[:1000]}"
+                        )
+                else:
+                    # No output but non-zero exit - treat as fatal
+                    logger.error(
+                        f"Failed to load CPG: exit {load_result.exit_code} with no output"
+                    )
+                    raise QueryExecutionError(
+                        f"Failed to load CPG: exit {load_result.exit_code} with no output"
+                    )
+
+            logger.info(f"CPG loaded (or warnings only) for session {session_id}")
+            
+            # Note: Joern automatically caches loaded CPGs in workspace
+            # Subsequent queries will be faster as overlays are already applied
 
         except Exception as e:
             logger.error(f"Failed to load CPG in container: {e}")
@@ -515,8 +558,163 @@ echo 'importCpg("{cpg_path}")' | {joern_cmd}
     async def _execute_query_in_shell(
         self, session_id: str, query: str, timeout: int
     ) -> QueryResult:
-        """Execute query in the container"""
+        """Execute query using Joern project caching (fast after first load)"""
         logger.debug(f"Executing query in session {session_id}: {query[:100]}...")
+
+        container_id = await self._get_container_id(session_id)
+        if not container_id:
+            raise QueryExecutionError(f"No container found for session {session_id}")
+
+        # Always use project-based execution (Joern caches loaded CPG)
+        return await self._execute_query_via_persistent_shell(session_id, query, timeout)
+
+    async def _execute_query_via_persistent_shell(
+        self, session_id: str, query: str, timeout: int
+    ) -> QueryResult:
+        """Execute query using Joern project (reuses loaded CPG - fast path)"""
+        logger.info(f"Executing query via Joern project (session {session_id})")
+        
+        container_id = await self._get_container_id(session_id)
+        container = self.docker_client.containers.get(container_id)
+        
+        query_id = str(uuid.uuid4())[:8]
+        cpg_path = self.session_cpgs.get(session_id, "/workspace/cpg.bin")
+        
+        try:
+            # Create query script file
+            output_file = f"/tmp/query_result_{query_id}.json"
+            
+            # Escape query for shell
+            query_escaped = query.replace("'", "'\\''")
+            query_with_pipe = f'{query_escaped} #> "{output_file}"'
+            
+            # Use Joern's project system - it caches the loaded CPG with overlays
+            # The project name is derived from the CPG path
+            # Format: open("<project_name>")
+            # After first load via importCpg, subsequent opens are instant
+            project_name = f"cpg.bin"  # Joern creates project based on CPG filename
+            
+            # Create script that opens existing project (fast) or imports fresh (slow on first run)
+            query_script = f"""
+// Try to open existing project (fast - reuses loaded CPG)
+val projectPath = "{cpg_path}"
+try {{
+  open(projectPath)
+}} catch {{
+  case e: Exception =>
+    // Project doesn't exist, import it (slow - first time only)
+    importCpg(projectPath)
+}}
+
+// Execute the query
+{query_with_pipe}
+"""
+            
+            query_file = f"/tmp/query_{query_id}.sc"
+            
+            # Write query script
+            write_cmd = f"cat > {query_file} << 'QUERY_EOF'\n{query_script}\nQUERY_EOF"
+            write_result = container.exec_run(["sh", "-c", write_cmd])
+            
+            if write_result.exit_code != 0:
+                raise QueryExecutionError("Failed to write query file")
+            
+            # Execute with joern (will reuse project if it exists)
+            exec_script = f"""#!/bin/bash
+timeout {timeout} joern --script {query_file} 2>&1
+
+EXIT_CODE=$?
+
+# Clean up query file
+rm -f {query_file}
+
+exit $EXIT_CODE
+"""
+            
+            loop = asyncio.get_event_loop()
+            
+            def _exec():
+                return container.exec_run(["sh", "-c", exec_script], workdir="/workspace")
+            
+            start_time = time.time()
+            exec_result = await loop.run_in_executor(None, _exec)
+            exec_time = time.time() - start_time
+            
+            logger.info(f"Query execution completed in {exec_time:.2f}s")
+            
+            if exec_result.exit_code != 0:
+                output = exec_result.output.decode("utf-8", errors="ignore") if exec_result.output else ""
+                
+                # Check if it's just warnings
+                non_fatal_patterns = [
+                    "FieldAccessLinkerPass",
+                    "ReachingDefPass",
+                    "The graph has been modified",
+                    "Skipping.",
+                    "WARN",
+                ]
+                
+                lines = [l.strip() for l in output.splitlines() if l.strip()]
+                if lines:
+                    fatal_lines = [
+                        l for l in lines
+                        if not any(tok in l for tok in non_fatal_patterns)
+                        and not l.startswith("Creating project")
+                        and not l.startswith("Loading base CPG")
+                        and not l.startswith("Adding default overlays")
+                    ]
+                    
+                    if fatal_lines:
+                        logger.error(f"Query execution failed: {output[:500]}")
+                        return QueryResult(success=False, error=f"Query failed: {output[:500]}")
+                    else:
+                        logger.info("Query completed with warnings only")
+            
+            # Read result file
+            def _read():
+                return container.exec_run(f"cat {output_file}")
+            
+            read_result = await loop.run_in_executor(None, _read)
+            
+            if read_result.exit_code != 0:
+                return QueryResult(success=False, error="Query produced no output")
+            
+            json_content = read_result.output.decode("utf-8", errors="ignore")
+            
+            # Clean up
+            container.exec_run(f"rm -f {output_file}")
+            
+            if not json_content.strip():
+                return QueryResult(success=True, data=[], row_count=0)
+            
+            # Parse JSON
+            try:
+                data = json.loads(json_content)
+                if isinstance(data, dict):
+                    data = [data]
+                elif not isinstance(data, list):
+                    data = [{"value": str(data)}]
+                
+                logger.info(f"Query executed successfully: {len(data)} results in {exec_time:.2f}s")
+                return QueryResult(success=True, data=data, row_count=len(data))
+            
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON: {e}")
+                return QueryResult(
+                    success=True,
+                    data=[{"value": json_content.strip()}],
+                    row_count=1
+                )
+        
+        except Exception as e:
+            logger.error(f"Error executing query: {e}")
+            return QueryResult(success=False, error=str(e))
+
+    async def _execute_query_oneshot(
+        self, session_id: str, query: str, timeout: int
+    ) -> QueryResult:
+        """Execute query using one-shot joern process (slow but reliable fallback)"""
+        logger.debug(f"Executing query via one-shot execution in session {session_id}: {query[:100]}...")
 
         container_id = await self._get_container_id(session_id)
         if not container_id:
@@ -529,52 +727,52 @@ echo 'importCpg("{cpg_path}")' | {joern_cmd}
             cpg_path = "/workspace/cpg.bin"
 
             # Create unique output file for this query
-            output_file = f"/tmp/query_result_{session_id}_{int(time.time())}.json"
+            query_id = str(uuid.uuid4())[:8]
+            output_file = f"/tmp/query_result_{query_id}.json"
 
+            # Escape single quotes in query for shell
+            query_escaped = query.replace("'", "'\\''")
+            
             # Create query with pipe to JSON file
-            query_with_pipe = f'{query} #> "{output_file}"'
+            query_with_pipe = f'{query_escaped} #> "{output_file}"'
 
-            # Create a simple script that loads CPG and executes query
-            script_content = f"""#!/bin/bash
-set -e
+            # NOTE: For large CPGs like ImageMagick, loading CPG can take 2-3 minutes
+            # The timeout needs to account for: CPG load time + query execution time
+            logger.info(f"Executing one-shot query with timeout={timeout}s (includes CPG load time)")
 
-# Check if CPG file exists
+            # Use file-based approach: write query to file, execute with timeout
+            exec_script = f"""#!/bin/bash
+# Check if CPG exists
 if [ ! -f "{cpg_path}" ]; then
     echo "ERROR: CPG file not found at {cpg_path}" >&2
     exit 1
 fi
 
-# Execute joern with the query
-echo '{query_with_pipe}' | timeout {timeout} joern {cpg_path}
+# Write query to temp file
+cat > /tmp/query_{query_id}.sc << 'QUERY_EOF'
+{query_with_pipe}
+QUERY_EOF
+
+# Execute query with timeout (load CPG + execute query)
+# For large CPGs, loading alone can take 2-3 minutes
+timeout {timeout} joern --script /tmp/query_{query_id}.sc {cpg_path} 2>&1
+
+# Capture exit code
+EXIT_CODE=$?
+
+# Clean up query file
+rm -f /tmp/query_{query_id}.sc
+
+exit $EXIT_CODE
 """
 
-            # Write script to container
-            script_result = container.exec_run(
-                [
-                    "sh",
-                    "-c",
-                    f"cat > /tmp/query.sh << 'SCRIPT_EOF'\n{
-                        script_content}SCRIPT_EOF\nchmod +x /tmp/query.sh",
-                ]
-            )
-
-            if script_result.exit_code != 0:
-                error_output = (
-                    script_result.output.decode("utf-8", errors="ignore")
-                    if script_result.output
-                    else "No output"
-                )
-                logger.error(f"Failed to create query script: {error_output}")
-                raise QueryExecutionError(
-                    f"Failed to create query script: {error_output}"
-                )
-
-            # Execute the script
+            # Write and execute script
             loop = asyncio.get_event_loop()
 
             def _exec_sync():
                 result = container.exec_run(
-                    ["/bin/bash", "/tmp/query.sh"], workdir="/workspace"
+                    ["sh", "-c", exec_script],
+                    workdir="/workspace"
                 )
                 return result
 
@@ -666,6 +864,10 @@ echo '{query_with_pipe}' | timeout {timeout} joern {cpg_path}
         # Remove from container mapping if present
         if session_id in self.session_containers:
             del self.session_containers[session_id]
+        
+        # Clean up shell tracking if present (though we don't use FIFOs anymore)
+        if session_id in self.session_shells:
+            del self.session_shells[session_id]
 
         logger.info(f"Closed query executor resources for session {session_id}")
 

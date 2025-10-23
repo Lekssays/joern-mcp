@@ -420,12 +420,7 @@ class TestMCPTools:
         )
         fake_services["query_executor"].execute_query.return_value = query_result
 
-        func = mcp.registered["list_files"]
-        result = await func(session_id=ready_session.id)
-
-        assert result["success"] is True
-        assert result["total"] == 3
-        assert "tree" in result
+        # `list_files` was removed from the tools. This test is no longer applicable.
 
     @pytest.mark.asyncio
     async def test_list_methods_success(self, fake_services, ready_session):

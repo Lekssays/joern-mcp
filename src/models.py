@@ -316,7 +316,7 @@ class CPGConfig:
 class QueryConfig:
     """Query execution configuration"""
 
-    timeout: int = 30
+    timeout: int = 300  # 5 minutes - accounts for large CPG loading time (~2-3 min) + query execution
     cache_enabled: bool = True
     cache_ttl: int = 300  # 5 minutes
 

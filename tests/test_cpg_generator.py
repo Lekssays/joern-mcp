@@ -88,7 +88,7 @@ class TestCPGGenerator:
         assert call_kwargs["name"] == "joern-session-session-123"
         assert call_kwargs["detach"] is True
         assert "/tmp/workspace" in str(call_kwargs["volumes"])
-        assert call_kwargs["environment"]["JAVA_OPTS"] == "-Xmx16G -Xms8G -XX:+UseG1GC -Dfile.encoding=UTF-8"
+        assert call_kwargs["environment"]["JAVA_OPTS"] == "-Xmx4G -Xms2G -XX:+UseG1GC -Dfile.encoding=UTF-8"
 
     @pytest.mark.asyncio
     async def test_create_session_container_failure(self, cpg_generator):

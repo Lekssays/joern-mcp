@@ -469,7 +469,7 @@ def register_core_tools(mcp, services: dict):
     async def run_cpgql_query_async(
         session_id: str,
         query: str,
-        timeout: int = 30,
+        timeout: int = 300,
         limit: Optional[int] = 150,
         offset: Optional[int] = None,
     ) -> Dict[str, Any]:
@@ -483,7 +483,7 @@ def register_core_tools(mcp, services: dict):
         Args:
             session_id: The session ID returned from create_cpg_session
             query: CPGQL query string (automatically converted to JSON output)
-            timeout: Maximum execution time in seconds (default: 30)
+            timeout: Maximum execution time in seconds (default: 300, includes CPG load time)
             limit: Maximum number of results to return (default: 150)
             offset: Number of results to skip before returning (default: None, meaning start from beginning)
 
@@ -708,7 +708,7 @@ def register_core_tools(mcp, services: dict):
     async def run_cpgql_query(
         session_id: str,
         query: str,
-        timeout: int = 30,
+        timeout: int = 300,
         limit: Optional[int] = 150,
         offset: Optional[int] = None,
     ) -> Dict[str, Any]:
@@ -722,7 +722,7 @@ def register_core_tools(mcp, services: dict):
         Args:
             session_id: The session ID returned from create_cpg_session
             query: CPGQL query string (automatically converted to JSON output)
-            timeout: Maximum execution time in seconds (default: 30)
+            timeout: Maximum execution time in seconds (default: 300, includes CPG load time)
             limit: Maximum number of results to return (default: 150)
             offset: Number of results to skip before returning (default: None, meaning start from beginning)
 
