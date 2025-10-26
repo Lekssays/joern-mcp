@@ -332,6 +332,7 @@ def register_taint_analysis_tools(mcp, services: dict):
             timeout: Maximum execution time in seconds (default: 60)
 
         Returns:
+            When source AND sink are provided:
             {
                 "success": true,
                 "source": {
@@ -359,8 +360,32 @@ def register_taint_analysis_tools(mcp, services: dict):
                 }
             }
 
-        Example - What WORKS:
-            # Memory allocation -> deallocation flow
+            When ONLY source is provided:
+            {
+                "success": true,
+                "source": {
+                    "node_id": "12345",
+                    "code": "allocate_memory(100)",
+                    "filename": "main.c",
+                    "lineNumber": 42,
+                    "method": "process_data"
+                },
+                "flows": [
+                    {
+                        "path_id": 0,
+                        "path_length": 3,
+                        "nodes": [
+                            ["allocate_memory(100)", "main.c", 42, "CALL"],
+                            ["buffer", "main.c", 42, "IDENTIFIER"],
+                            ["deallocate_memory(buffer)", "main.c", 58, "CALL"]
+                        ]
+                    }
+                ],
+                "total_flows": 1,
+                "message": "Found 1 flows from source to dangerous sinks"
+            }
+
+        Example - Source and Sink provided:
             find_taint_flows(
                 session_id="abc-123",
                 source_location="main.c:42",   # allocate_memory(100)
@@ -368,14 +393,19 @@ def register_taint_analysis_tools(mcp, services: dict):
             )
             # Result: ✓ Found flow through variable 'buffer'
 
-        Example - What DOESN'T work:
-            # Interprocedural flow
+        Example - Only Source provided:
             find_taint_flows(
                 session_id="abc-123",
-                source_location="main.c:20",    # call_helper(data, ...)
-                sink_location="helper.c:35"     # process_in_helper() in different function
+                source_location="main.c:42"    # allocate_memory(100)
             )
-            # Result: ❌ No flow (crosses function boundaries - use get_call_graph instead)
+            # Result: ✓ Found flows to all dangerous sinks (free, system, etc.) that use the allocated variable
+
+        Example - Only Sink provided (ERROR):
+            find_taint_flows(
+                session_id="abc-123",
+                sink_location="main.c:58"      # deallocate_memory(buffer)
+            )
+            # Result: ❌ Validation error - only sink not supported
         """
         try:
             validate_session_id(session_id)
@@ -385,10 +415,20 @@ def register_taint_analysis_tools(mcp, services: dict):
                 raise ValidationError(
                     "Either source_node_id or source_location must be provided"
                 )
-            if not sink_node_id and not sink_location:
+            if not sink_node_id and not sink_location and (source_node_id or source_location):
+                # If only source is provided, that's fine - we'll find flows to any sink
+                pass
+            elif not sink_node_id and not sink_location:
+                # If neither source nor sink is provided, that's an error
                 raise ValidationError(
-                    "Either sink_node_id or sink_location must be provided"
+                    "Either source_node_id/source_location or sink_node_id/sink_location must be provided"
                 )
+            elif sink_node_id or sink_location:
+                # If only sink is provided, that's an error
+                if not source_node_id and not source_location:
+                    raise ValidationError(
+                        "Only sink provided - not supported. Please provide a source to find flows from."
+                    )
 
             session_manager = services["session_manager"]
             query_executor = services["query_executor"]
@@ -405,6 +445,7 @@ def register_taint_analysis_tools(mcp, services: dict):
             # Resolve source and sink nodes
             source_info = None
             sink_info = None
+            has_sink = bool(sink_node_id or sink_location)
 
             # Helper function to resolve node by ID or location
             async def resolve_node(node_id, location, node_type):
@@ -460,62 +501,114 @@ def register_taint_analysis_tools(mcp, services: dict):
                 return None
 
             source_info = await resolve_node(source_node_id, source_location, "source")
-            sink_info = await resolve_node(sink_node_id, sink_location, "sink")
+            if has_sink:
+                sink_info = await resolve_node(sink_node_id, sink_location, "sink")
 
-            # If either source or sink not found, return early
-            if not source_info or not sink_info:
+            # If source not found, return early
+            if not source_info:
                 return {
                     "success": False,
                     "source": source_info,
                     "sink": sink_info,
                     "flow_found": False,
-                    "message": f"Could not resolve source or sink from provided identifiers",
+                    "message": f"Could not resolve source from provided identifiers",
+                }
+
+            # If sink is required but not found, return early
+            if has_sink and not sink_info:
+                return {
+                    "success": False,
+                    "source": source_info,
+                    "sink": sink_info,
+                    "flow_found": False,
+                    "message": f"Could not resolve sink from provided identifiers",
                 }
 
             # Build dataflow query to find paths from source to sink
             source_id = source_info["node_id"]
-            sink_id = sink_info["node_id"]
+            
+            if has_sink:
+                # Specific sink mode: find flows between source and sink
+                sink_id = sink_info["node_id"]
+                query = f"""
+                {{
+                  val source = cpg.call.id({source_id}L).l.headOption
+                  val sink = cpg.call.id({sink_id}L).l.headOption
 
-            query = f"""
-            {{
-              val source = cpg.call.id({source_id}L).l.headOption
-              val sink = cpg.call.id({sink_id}L).l.headOption
+                  val flows = if (source.nonEmpty && sink.nonEmpty) {{
+                    // Simple dataflow: source -> identifier -> sink
+                    val sourceCall = source.get
+                    val sinkCall = sink.get
 
-              val flows = if (source.nonEmpty && sink.nonEmpty) {{
-                // Simple dataflow: source -> identifier -> sink
-                val sourceCall = source.get
-                val sinkCall = sink.get
+                    val assignments = sourceCall.inAssignment.l
+                    if (assignments.nonEmpty) {{
+                      val assign = assignments.head
+                      val targetVar = assign.target.code
 
-                val assignments = sourceCall.inAssignment.l
-                if (assignments.nonEmpty) {{
-                  val assign = assignments.head
-                  val targetVar = assign.target.code
+                      val sinkArgs = sinkCall.argument.code.l
+                      val matches = sinkArgs.contains(targetVar)
 
-                  val sinkArgs = sinkCall.argument.code.l
-                  val matches = sinkArgs.contains(targetVar)
-
-                  if (matches) {{
-                    List(Map(
-                      "_1" -> 0,  // flow_idx
-                      "_2" -> 3,  // path_length
-                      "_3" -> List(  // nodes
-                        Map("_1" -> sourceCall.code, "_2" -> sourceCall.file.name.headOption.getOrElse("unknown"), "_3" -> sourceCall.lineNumber.getOrElse(-1), "_4" -> "CALL"),
-                        Map("_1" -> targetVar, "_2" -> assign.file.name.headOption.getOrElse("unknown"), "_3" -> assign.lineNumber.getOrElse(-1), "_4" -> "IDENTIFIER"),
-                        Map("_1" -> sinkCall.code, "_2" -> sinkCall.file.name.headOption.getOrElse("unknown"), "_3" -> sinkCall.lineNumber.getOrElse(-1), "_4" -> "CALL")
-                      )
-                    ))
+                      if (matches) {{
+                        List(Map(
+                          "_1" -> 0,  // flow_idx
+                          "_2" -> 3,  // path_length
+                          "_3" -> List(  // nodes
+                            Map("_1" -> sourceCall.code, "_2" -> sourceCall.file.name.headOption.getOrElse("unknown"), "_3" -> sourceCall.lineNumber.getOrElse(-1), "_4" -> "CALL"),
+                            Map("_1" -> targetVar, "_2" -> assign.file.name.headOption.getOrElse("unknown"), "_3" -> assign.lineNumber.getOrElse(-1), "_4" -> "IDENTIFIER"),
+                            Map("_1" -> sinkCall.code, "_2" -> sinkCall.file.name.headOption.getOrElse("unknown"), "_3" -> sinkCall.lineNumber.getOrElse(-1), "_4" -> "CALL")
+                          )
+                        ))
+                      }} else {{
+                        List()
+                      }}
+                    }} else {{
+                      List()
+                    }}
                   }} else {{
                     List()
                   }}
-                }} else {{
-                  List()
-                }}
-              }} else {{
-                List()
-              }}
 
-              flows
-            }}.toJsonPretty"""
+                  flows
+                }}.toJsonPretty"""
+            else:
+                # Source-only mode: find flows from source to any dangerous sink
+                query = f"""
+                {{
+                  val source = cpg.call.id({source_id}L).l.headOption
+
+                  val flows = if (source.nonEmpty) {{
+                    val sourceCall = source.get
+                    val assignments = sourceCall.inAssignment.l
+                    
+                    if (assignments.nonEmpty) {{
+                      val assign = assignments.head
+                      val targetVar = assign.target.code
+                      
+                      // Find all dangerous sinks that use this variable
+                      val dangerousSinks = Set("system", "popen", "execl", "execv", "sprintf", "fprintf", "free", "delete")
+                      val sinkCalls = cpg.call.name(dangerousSinks).filter(sink => {{
+                        val sinkArgs = sink.argument.code.l
+                        sinkArgs.contains(targetVar)
+                      }}).l.take(20)  // Limit results
+                      
+                      sinkCalls.map(sink => Map(
+                        "_1" -> 0,  // flow_idx
+                        "_2" -> 3,  // path_length
+                        "_3" -> List(  // nodes
+                          Map("_1" -> sourceCall.code, "_2" -> sourceCall.file.name.headOption.getOrElse("unknown"), "_3" -> sourceCall.lineNumber.getOrElse(-1), "_4" -> "CALL"),
+                          Map("_1" -> targetVar, "_2" -> assign.file.name.headOption.getOrElse("unknown"), "_3" -> assign.lineNumber.getOrElse(-1), "_4" -> "IDENTIFIER"),
+                          Map("_1" -> sink.code, "_2" -> sink.file.name.headOption.getOrElse("unknown"), "_3" -> sink.lineNumber.getOrElse(-1), "_4" -> "CALL")
+                        )
+                      ))
+                    }} else {{
+                      List()
+                    }}
+                  }} else {{
+                    List()
+                  }}
+
+                  flows
+                }}.toJsonPretty"""
 
             result = await query_executor.execute_query(
                 session_id=session_id,
@@ -550,13 +643,32 @@ def register_taint_analysis_tools(mcp, services: dict):
                             }
                         )
 
-            return {
-                "success": True,
-                "source": source_info,
-                "sink": sink_info,
-                "flows": flows,
-                "total_flows": len(flows),
-            }
+            if has_sink:
+                # Specific sink mode: return single flow result
+                flow_found = len(flows) > 0
+                return {
+                    "success": True,
+                    "source": source_info,
+                    "sink": sink_info,
+                    "flow_found": flow_found,
+                    "flow_type": "direct_identifier_match" if flow_found else None,
+                    "intermediate_variable": flows[0]["nodes"][1]["_1"] if flow_found else None,
+                    "details": {
+                        "assignment": flows[0]["nodes"][1]["_1"] if flow_found else None,
+                        "assignment_line": flows[0]["nodes"][1]["_3"] if flow_found else None,
+                        "variable_uses": 1 if flow_found else 0,
+                        "explanation": f"{source_info['code']} result assigned to variable and used in {sink_info['code']}" if flow_found else None,
+                    } if flow_found else None,
+                }
+            else:
+                # Source-only mode: return multiple flows
+                return {
+                    "success": True,
+                    "source": source_info,
+                    "flows": flows,
+                    "total_flows": len(flows),
+                    "message": f"Found {len(flows)} flows from source to dangerous sinks" if flows else "No flows found from source to dangerous sinks",
+                }
 
         except (SessionNotFoundError, SessionNotReadyError, ValidationError) as e:
             logger.error(f"Error finding taint flows: {e}")

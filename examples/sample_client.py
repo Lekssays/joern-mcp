@@ -416,8 +416,12 @@ async def demonstrate_joern_mcp():
                     var = taint_dict.get('intermediate_variable', 'N/A')
                     logger.info(f"    ✓ Flow {flows_found}: {src.get('code')} -> '{var}' -> {sink.get('code')}")
                 else:
-                    details = taint_dict.get('details', {})
-                    logger.info(f"       No flow. Reason: {details.get('explanation', 'unknown')}")
+                    details = taint_dict.get('details')
+                    if details and isinstance(details, dict):
+                        reason = details.get('explanation', 'unknown')
+                    else:
+                        reason = 'no flow detected'
+                    logger.info(f"       No flow. Reason: {reason}")
         
         if flows_found > 0:
             logger.info(f"  ✅ Found {flows_found} matching dataflow(s)")

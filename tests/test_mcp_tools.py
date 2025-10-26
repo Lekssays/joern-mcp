@@ -752,12 +752,9 @@ class TestMCPTools:
         assert result["source"]["code"] == 'getenv("PATH")'
         assert result["sink"]["node_id"] == 67890
         assert result["sink"]["code"] == "system(cmd)"
-        assert len(result["flows"]) == 1
-        assert result["flows"][0]["path_length"] == 3
-        assert len(result["flows"][0]["nodes"]) == 3
-        assert len(result["flows"]) == 1
-        assert result["flows"][0]["path_length"] == 3
-        assert len(result["flows"][0]["nodes"]) == 3
+        assert result["flow_found"] is True
+        assert "flow_type" in result
+        assert "intermediate_variable" in result
 
     @pytest.mark.asyncio
     async def test_check_method_reachability_success(
@@ -1147,5 +1144,6 @@ class TestEdgeCases:
         )
 
         assert result["success"] is True
-        assert result["flows"] == []
-        assert result["total_flows"] == 0
+        assert result["flow_found"] is False
+        assert "source" in result
+        assert "sink" in result

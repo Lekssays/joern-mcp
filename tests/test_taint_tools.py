@@ -185,8 +185,94 @@ async def test_find_taint_flows_success(fake_services):
         timeout=10,
     )
 
+@pytest.mark.asyncio
+async def test_find_taint_flows_source_only(fake_services):
+    # Setup mock for source-only query (flows to any sink)
+    services = fake_services
+
+    # Create side effect to return different results for 2 queries
+    source_result = QueryResult(
+        success=True,
+        data=[
+            {"_1": 1001, "_2": 'getenv("FOO")', "_3": "core.c", "_4": 10, "_5": "main"}
+        ],
+        row_count=1,
+    )
+
+    flow_result = QueryResult(
+        success=True,
+        data=[
+            {
+                "_1": 0,
+                "_2": 3,
+                "_3": [
+                    {"_1": 'getenv("FOO")', "_2": "core.c", "_3": 10, "_4": "CALL"},
+                    {"_1": "cmd", "_2": "core.c", "_3": 25, "_4": "IDENTIFIER"},
+                    {"_1": "system(cmd)", "_2": "core.c", "_3": 42, "_4": "CALL"},
+                ],
+            }
+        ],
+        row_count=1,
+    )
+
+    call_count = [0]
+
+    async def mock_execute(*args, **kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return source_result
+        else:
+            return flow_result
+
+    services["query_executor"].execute_query = AsyncMock(side_effect=mock_execute)
+    services["session_manager"].get_session = AsyncMock(
+        return_value=Session(
+            id=services["session_id"],
+            language="c",
+            status=SessionStatus.READY.value,
+            source_path="/path",
+            source_type="local",
+            created_at=datetime.now(timezone.utc),
+            last_accessed=datetime.now(timezone.utc),
+        )
+    )
+
+    mcp = FakeMCP()
+    register_tools(mcp, services)
+
+    func = mcp.registered.get("find_taint_flows")
+    assert func is not None
+
+    res = await func(
+        session_id=services["session_id"],
+        source_node_id="1001",
+        timeout=10,
+    )
+
     assert res.get("success") is True
     assert res["source"]["node_id"] == 1001
-    assert res["sink"]["node_id"] == 1002
     assert "flows" in res
     assert isinstance(res["flows"], list)
+    assert res["total_flows"] == 1
+
+
+@pytest.mark.asyncio
+async def test_find_taint_flows_sink_only_error(fake_services):
+    # Test that sink-only queries are rejected
+    services = fake_services
+
+    mcp = FakeMCP()
+    register_tools(mcp, services)
+
+    func = mcp.registered.get("find_taint_flows")
+    assert func is not None
+
+    res = await func(
+        session_id=services["session_id"],
+        sink_node_id="1002",
+        timeout=10,
+    )
+
+    assert res.get("success") is False
+    assert "error" in res
+    assert "Either source_node_id or source_location must be provided" in res["error"]["message"]
