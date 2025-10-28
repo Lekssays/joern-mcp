@@ -79,9 +79,6 @@ This will:
 ```bash
 # Test that server starts
 python main.py
-
-# In another terminal, test basic connectivity
-curl http://localhost:4242/health
 ```
 
 ## Making Changes
