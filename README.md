@@ -417,11 +417,35 @@ python main.py
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Make changes and add tests
-4. Run tests: `pytest && black . && flake8`
-5. Submit a pull request
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
+
+- **Getting started** with development setup
+- **Code style** and quality guidelines
+- **Testing** requirements and best practices
+- **Submitting changes** through pull requests
+- **Reporting issues** and feature requests
+- **Documentation** standards
+
+Quick start for contributors:
+
+```bash
+git clone https://github.com/YOUR_USERNAME/joern-mcp.git
+cd joern-mcp
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+./setup.sh
+
+# Create feature branch
+git checkout -b feature/your-feature
+
+# Make changes and run tests
+pytest && black . && flake8
+
+# Submit pull request
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 ## Acknowledgments
 
