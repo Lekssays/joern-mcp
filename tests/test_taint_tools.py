@@ -42,10 +42,19 @@ def fake_services():
 
     # query executor mock
     query_executor = AsyncMock()
-
-    # sample QueryResult structures matching tool expectations
-    query_executor.execute_query = AsyncMock(
-        return_value=QueryResult(
+    
+    # Store the last query for test assertions
+    query_executor.last_query = None
+    
+    async def execute_query_with_tracking(*args, **kwargs):
+        # Store the query parameter
+        if 'query' in kwargs:
+            query_executor.last_query = kwargs['query']
+        elif len(args) > 2:
+            query_executor.last_query = args[2]  # query is typically 3rd arg
+        
+        # Return the mock result
+        return QueryResult(
             success=True,
             data=[
                 {
@@ -59,7 +68,8 @@ def fake_services():
             ],
             row_count=1,
         )
-    )
+    
+    query_executor.execute_query = execute_query_with_tracking
 
     # config with taint lists
     cpg = CPGConfig()
@@ -95,6 +105,33 @@ async def test_find_taint_sources_success(fake_services):
 
 
 @pytest.mark.asyncio
+async def test_find_taint_sources_with_filename_filter(fake_services):
+    """Test find_taint_sources with filename parameter"""
+    mcp = FakeMCP()
+    register_tools(mcp, fake_services)
+
+    func = mcp.registered.get("find_taint_sources")
+    assert func is not None
+
+    # Call with filename filter
+    res = await func(
+        session_id=fake_services["session_id"],
+        language="c",
+        filename="shell.c",
+        limit=10
+    )
+
+    assert res.get("success") is True
+    assert "sources" in res
+    assert isinstance(res["sources"], list)
+    # Verify the query executor was called with a query containing the file filter
+    query_executor = fake_services["query_executor"]
+    assert query_executor.last_query is not None
+    assert "where(_.file.name" in query_executor.last_query
+    assert "shell" in query_executor.last_query
+
+
+@pytest.mark.asyncio
 async def test_find_taint_sinks_success(fake_services):
     mcp = FakeMCP()
     register_tools(mcp, fake_services)
@@ -108,6 +145,33 @@ async def test_find_taint_sinks_success(fake_services):
     assert "sinks" in res
     assert isinstance(res["sinks"], list)
     assert res["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_find_taint_sinks_with_filename_filter(fake_services):
+    """Test find_taint_sinks with filename parameter"""
+    mcp = FakeMCP()
+    register_tools(mcp, fake_services)
+
+    func = mcp.registered.get("find_taint_sinks")
+    assert func is not None
+
+    # Call with filename filter
+    res = await func(
+        session_id=fake_services["session_id"],
+        language="c",
+        filename="main.c",
+        limit=10
+    )
+
+    assert res.get("success") is True
+    assert "sinks" in res
+    assert isinstance(res["sinks"], list)
+    # Verify the query executor was called with a query containing the file filter
+    query_executor = fake_services["query_executor"]
+    assert query_executor.last_query is not None
+    assert "where(_.file.name" in query_executor.last_query
+    assert "main" in query_executor.last_query
 
 
 @pytest.mark.asyncio

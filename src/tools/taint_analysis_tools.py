@@ -26,6 +26,7 @@ def register_taint_analysis_tools(mcp, services: dict):
         session_id: str,
         language: Optional[str] = None,
         source_patterns: Optional[list] = None,
+        filename: Optional[str] = None,
         limit: int = 200,
     ) -> Dict[str, Any]:
         """
@@ -41,6 +42,8 @@ def register_taint_analysis_tools(mcp, services: dict):
                 If not provided, uses the session's language
             source_patterns: Optional list of regex patterns to match source function names
                 (e.g., ["getenv", "fgets", "scanf"]). If not provided, uses default patterns
+            filename: Optional filename to filter results (e.g., "shell.c", "main.c")
+                Uses regex matching, so partial names work (e.g., "shell" matches "shell.c")
             limit: Maximum number of results to return (default: 200)
 
         Returns:
@@ -100,9 +103,13 @@ def register_taint_analysis_tools(mcp, services: dict):
             # Remove trailing parens from patterns for proper regex matching
             cleaned_patterns = [p.rstrip("(") for p in patterns]
             joined = "|".join([re.escape(p) for p in cleaned_patterns])
-            # Use cpg.call where name matches regex
-            query = f'cpg.call.name("{
-                joined}").map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take({limit})'
+            
+            # Build query with optional file filter
+            if filename:
+                # Use regex to match filename - handles both full and partial matches
+                query = f'cpg.call.name("{joined}").where(_.file.name(".*{filename}.*")).map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take({limit})'
+            else:
+                query = f'cpg.call.name("{joined}").map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take({limit})'
 
             result = await query_executor.execute_query(
                 session_id=session_id,
@@ -152,6 +159,7 @@ def register_taint_analysis_tools(mcp, services: dict):
         session_id: str,
         language: Optional[str] = None,
         sink_patterns: Optional[list] = None,
+        filename: Optional[str] = None,
         limit: int = 200,
     ) -> Dict[str, Any]:
         """
@@ -167,6 +175,8 @@ def register_taint_analysis_tools(mcp, services: dict):
                 If not provided, uses the session's language
             sink_patterns: Optional list of regex patterns to match sink function names
                 (e.g., ["system", "popen", "sprintf"]). If not provided, uses default patterns
+            filename: Optional filename to filter results (e.g., "shell.c", "main.c")
+                Uses regex matching, so partial names work (e.g., "shell" matches "shell.c")
             limit: Maximum number of results to return (default: 200)
 
         Returns:
@@ -215,8 +225,13 @@ def register_taint_analysis_tools(mcp, services: dict):
             # Remove trailing parens from patterns for proper regex matching
             cleaned_patterns = [p.rstrip("(") for p in patterns]
             joined = "|".join([re.escape(p) for p in cleaned_patterns])
-            query = f'cpg.call.name("{
-                joined}").map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take({limit})'
+            
+            # Build query with optional file filter
+            if filename:
+                # Use regex to match filename - handles both full and partial matches
+                query = f'cpg.call.name("{joined}").where(_.file.name(".*{filename}.*")).map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take({limit})'
+            else:
+                query = f'cpg.call.name("{joined}").map(c => (c.id, c.name, c.code, c.file.name.headOption.getOrElse("unknown"), c.lineNumber.getOrElse(-1), c.method.fullName)).take({limit})'
 
             result = await query_executor.execute_query(
                 session_id=session_id,
