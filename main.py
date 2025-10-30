@@ -11,6 +11,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
+from starlette.responses import JSONResponse
 
 from src.config import load_config
 from src.services import (
@@ -22,6 +23,9 @@ from src.services import (
 )
 from src.utils import RedisClient, setup_logging
 from src.tools import register_tools
+
+# Version information - bump this when releasing new versions
+VERSION = "0.2.0-beta"
 
 # Global service instances
 services = {}
@@ -111,6 +115,32 @@ mcp = FastMCP(
 
 # Register MCP tools
 register_tools(mcp, services)
+
+
+# Health check endpoint
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(request):
+    """Health check endpoint for monitoring server status"""
+    return JSONResponse({
+        "status": "healthy",
+        "service": "joern-mcp-server",
+        "version": VERSION
+    })
+
+
+# Root endpoint
+@mcp.custom_route("/", methods=["GET"])
+async def root(request):
+    """Root endpoint providing basic server information"""
+    return JSONResponse({
+        "service": "joern-mcp-server",
+        "description": "Joern MCP Server for static code analysis using Code Property Graph technology",
+        "version": VERSION,
+        "endpoints": {
+            "health": "/health",
+            "mcp": "/mcp"
+        }
+    })
 
 
 if __name__ == "__main__":

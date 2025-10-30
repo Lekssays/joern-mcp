@@ -135,3 +135,58 @@ class TestLifespan:
             with pytest.raises(Exception, match="Redis connection failed"):
                 async with lifespan(mock_mcp):
                     pass
+
+
+class TestEndpoints:
+    """Test custom HTTP endpoints"""
+
+    @pytest.mark.asyncio
+    async def test_health_endpoint(self):
+        """Test the /health endpoint returns correct response"""
+        from main import health_check, VERSION
+        from starlette.requests import Request
+        from starlette.responses import JSONResponse
+
+        # Mock request
+        mock_request = AsyncMock(spec=Request)
+
+        # Call the health endpoint
+        response = await health_check(mock_request)
+
+        # Verify response
+        assert isinstance(response, JSONResponse)
+        response_data = response.body
+        # JSONResponse.body is bytes, so we need to decode it
+        import json
+        response_dict = json.loads(response_data.decode('utf-8'))
+
+        assert response_dict["status"] == "healthy"
+        assert response_dict["service"] == "joern-mcp-server"
+        assert response_dict["version"] == VERSION
+
+    @pytest.mark.asyncio
+    async def test_root_endpoint(self):
+        """Test the / root endpoint returns correct response"""
+        from main import root, VERSION
+        from starlette.requests import Request
+        from starlette.responses import JSONResponse
+
+        # Mock request
+        mock_request = AsyncMock(spec=Request)
+
+        # Call the root endpoint
+        response = await root(mock_request)
+
+        # Verify response
+        assert isinstance(response, JSONResponse)
+        response_data = response.body
+        # JSONResponse.body is bytes, so we need to decode it
+        import json
+        response_dict = json.loads(response_data.decode('utf-8'))
+
+        assert response_dict["service"] == "joern-mcp-server"
+        assert "description" in response_dict
+        assert response_dict["version"] == VERSION
+        assert "endpoints" in response_dict
+        assert response_dict["endpoints"]["health"] == "/health"
+        assert response_dict["endpoints"]["mcp"] == "/mcp"
