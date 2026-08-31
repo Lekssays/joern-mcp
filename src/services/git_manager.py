@@ -1,39 +1,28 @@
 """
-Git repository manager for cloning and managing GitHub repositories
+Git repository manager for cloning and managing remote git repositories.
+
+Besides the built-in github.com/gitlab.com https allowlist, an operator can
+allowlist custom git servers (e.g. a self-hosted Forgejo in the LAN, cloned
+over ssh) via the GIT_CLONE_EXTRA_HOSTS / GIT_CLONE_SSH_* environment
+variables — see src/defaults.py.
 """
 
 import asyncio
 import logging
 import os
 import re
+import shlex
 import shutil
 from typing import Dict, Optional
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import git
 
+from .. import defaults
 from ..exceptions import GitOperationError, ValidationError
 from ..utils.validators import validate_github_url
 
 logger = logging.getLogger(__name__)
-
-
-def _mask_token_in_url(url: str) -> str:
-    """
-    Mask authentication tokens in URLs for safe logging.
-
-    Args:
-        url: URL that may contain a token
-
-    Returns:
-        URL with token replaced by '***'
-    """
-    # Pattern to match tokens in URLs: scheme://token@host/path
-    return re.sub(
-        r"(https?://)[^@\s]+@",
-        r"\1***@",
-        url
-    )
 
 
 def _mask_token_in_text(text: str) -> str:
@@ -46,15 +35,55 @@ def _mask_token_in_text(text: str) -> str:
     Returns:
         Text with tokens masked
     """
-    return re.sub(
-        r"(https?://)[^@\s]+@",
-        r"\1***@",
-        text
-    )
+    return re.sub(r"(https?://)[^@\s]+@", r"\1***@", text)
+
+
+def _ssh_clone_env() -> Dict[str, str]:
+    """Environment overrides for an ssh:// clone of a custom git server.
+
+    git invokes the command in GIT_SSH_COMMAND for every ssh remote. Default to
+    the operator's full override (GIT_CLONE_SSH_COMMAND) or build one from
+    GIT_CLONE_SSH_KEY_PATH. BatchMode keeps a missing key/passphrase from
+    hanging the clone on an interactive prompt.
+
+    Host key policy: with GIT_CLONE_SSH_KNOWN_HOSTS pointing at a known_hosts
+    file the server key is *pinned* (StrictHostKeyChecking=yes). Without it we
+    fall back to accept-new, which records the key on first contact — note that
+    in the dockerized stack that record lives in the container's ~/.ssh and is
+    lost on every container recreate, so it is trust-on-first-use each deploy.
+
+    Only GIT_SSH_COMMAND is returned: GitPython layers these over os.environ
+    for the child process, so there is no need (and no reason, given the
+    secrets in this server's environment) to copy the whole environment.
+    """
+    ssh_cmd = os.getenv("GIT_CLONE_SSH_COMMAND", defaults.GIT_CLONE_SSH_COMMAND).strip()
+    if not ssh_cmd:
+        parts = ["ssh"]
+        key_path = os.getenv(
+            "GIT_CLONE_SSH_KEY_PATH", defaults.GIT_CLONE_SSH_KEY_PATH
+        ).strip()
+        if key_path:
+            # git runs GIT_SSH_COMMAND through a shell, so paths need quoting.
+            parts += ["-i", shlex.quote(key_path)]
+        known_hosts = os.getenv(
+            "GIT_CLONE_SSH_KNOWN_HOSTS", defaults.GIT_CLONE_SSH_KNOWN_HOSTS
+        ).strip()
+        if known_hosts:
+            parts += [
+                "-o",
+                f"UserKnownHostsFile={shlex.quote(known_hosts)}",
+                "-o",
+                "StrictHostKeyChecking=yes",
+            ]
+        else:
+            parts += ["-o", "StrictHostKeyChecking=accept-new"]
+        parts += ["-o", "BatchMode=yes"]
+        ssh_cmd = " ".join(parts)
+    return {"GIT_SSH_COMMAND": ssh_cmd}
 
 
 class GitManager:
-    """Handles GitHub repository operations"""
+    """Handles remote git repository operations"""
 
     def __init__(self, workspace_root: str):
         self.workspace_root = workspace_root
@@ -68,17 +97,30 @@ class GitManager:
         branch: Optional[str] = None,
         token: Optional[str] = None,
     ) -> str:
-        """Clone a GitHub repository"""
+        """Clone a repo (https for github/gitlab; ssh for custom hosts)"""
         try:
-            # Validate URL
+            # Validate URL (scheme/host allowlist, no embedded credentials, …)
             validate_github_url(repo_url)
 
-            # Parse URL and inject token if provided
-            if token:
-                parsed = urlparse(repo_url)
-                auth_url = f"{parsed.scheme}://{token}@{parsed.netloc}{parsed.path}"
-            else:
-                auth_url = repo_url
+            parsed = urlparse(repo_url)
+            auth_url = repo_url
+            clone_env: Optional[Dict[str, str]] = None
+            injected_credential = False
+
+            if parsed.scheme in ("http", "https"):
+                # Built-in github.com/gitlab.com hosts only (the validator
+                # rejects every other host): the per-call token rides in the
+                # URL username and is stripped from .git/config afterwards.
+                if token:
+                    auth_url = (
+                        f"{parsed.scheme}://{quote(token, safe='')}"
+                        f"@{parsed.netloc}{parsed.path}"
+                    )
+                    injected_credential = True
+            elif parsed.scheme == "ssh":
+                # ssh:// (custom GIT_CLONE_EXTRA_HOSTS server): auth comes from
+                # the key/agent via GIT_SSH_COMMAND, not from the URL.
+                clone_env = _ssh_clone_env()
 
             # Create target directory
             os.makedirs(target_path, exist_ok=True)
@@ -87,12 +129,12 @@ class GitManager:
             # Clone in a thread pool (git operations are blocking)
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
-                None, self._do_clone, auth_url, source_path, branch
+                None, self._do_clone, auth_url, source_path, branch, clone_env
             )
 
             # Remove the embedded credential from .git/config so the token is
             # not stored on disk in plaintext.
-            if token:
+            if injected_credential:
                 await loop.run_in_executor(
                     None, self._strip_remote_credential, source_path, repo_url
                 )
@@ -108,13 +150,19 @@ class GitManager:
             logger.error(f"Failed to clone repository: {safe_error}")
             raise GitOperationError(f"Failed to clone repository: {safe_error}")
 
-    def _do_clone(self, url: str, target: str, branch: Optional[str]):
+    def _do_clone(
+        self,
+        url: str,
+        target: str,
+        branch: Optional[str],
+        env: Optional[Dict[str, str]] = None,
+    ):
         """Blocking clone operation"""
         try:
             if branch:
-                git.Repo.clone_from(url, target, branch=branch, depth=1)
+                git.Repo.clone_from(url, target, branch=branch, depth=1, env=env)
             else:
-                git.Repo.clone_from(url, target, depth=1)
+                git.Repo.clone_from(url, target, depth=1, env=env)
         except Exception as e:
             # Mask tokens in error messages
             safe_error = _mask_token_in_text(str(e))

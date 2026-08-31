@@ -1714,13 +1714,16 @@ For git repositories, it clones the repo first. For local paths, it copies the s
 The CPG is cached by a hash of the codebase.
 
 Accepted git repositories (source_type='github'):
-  - ONLY public/private repos on github.com or gitlab.com.
-  - The URL MUST be an https:// URL of the form:
+  - Public/private repos on github.com or gitlab.com via https:// URLs of the form:
       https://github.com/<owner>/<repo>   or   https://gitlab.com/<owner>/<repo>
     (gitlab nested subgroups are allowed; a trailing .git is fine).
-  - Other hosts, schemes (git://, ssh://, http://), embedded credentials, or
-    custom ports are rejected. Use github_token for a private repo, do NOT embed
-    the token in the URL.
+  - Repos on the server's CUSTOM git hosts, when the operator configured
+    GIT_CLONE_EXTRA_HOSTS (e.g. a self-hosted Forgejo). Those hosts accept
+    ssh:// URLs (with custom ports), e.g.:
+      ssh://git@192.168.152.14:3000/<owner>/<repo>.git
+  - Embedded credentials in the URL are always rejected. Use github_token for a
+    private github.com/gitlab.com repo — do NOT embed the token in the URL.
+    (Custom hosts authenticate via the operator's ssh key, not a token.)
 
 Pasting code directly (source_type='snippet'):
   Wrap the code in a <code> tag whose `language` attribute is one of the supported
@@ -1746,10 +1749,13 @@ they want the full project. Pass force=True when the user confirms the full proj
 This guard does NOT apply to GitHub URLs — size is unknown until cloned.
 
 Args:
-    source_type: One of 'local', 'github' (a github.com/gitlab.com repo), or 'snippet'.
+    source_type: One of 'local', 'github' (a github.com/gitlab.com repo, or a repo
+                 on a configured GIT_CLONE_EXTRA_HOSTS server), or 'snippet'.
     source_path: REQUIRED for local (absolute path) and github (an https
-                 github.com/gitlab.com URL). OPTIONAL for snippet — a short label;
-                 when omitted the server derives one from the filename/language.
+                 github.com/gitlab.com URL, or an ssh:// URL on a host the
+                 operator allowlisted via GIT_CLONE_EXTRA_HOSTS). OPTIONAL for
+                 snippet — a short label; when omitted the server derives one from
+                 the filename/language.
     language: Programming language (java, c, cpp, python, javascript, go, etc.).
               REQUIRED for local/github. Optional for snippets that carry a
               <code language="..."> tag (the tag wins) or whose language is inferable.
@@ -1771,7 +1777,9 @@ Notes:
     - This is an async operation. Use get_cpg_status to check progress.
     - Large codebases may take several minutes to analyze.
     - Supported languages: c, cpp, java, javascript, python, go, kotlin, csharp, php, ruby, swift.
-    - Git repos: only https://github.com/... and https://gitlab.com/... are accepted.
+    - Git repos: only https://github.com/... and https://gitlab.com/... are
+      accepted, plus ssh:// URLs on hosts the operator configured via the
+      GIT_CLONE_EXTRA_HOSTS environment variable (e.g. a LAN Forgejo).
 
 Examples:
     generate_cpg(
@@ -1787,11 +1795,11 @@ Examples:
     )
     async def generate_cpg(
         source_type: Annotated[str, Field(description="One of 'local', 'github', or 'snippet' (code pasted directly into the chat)")],
-        source_path: Annotated[Optional[str], Field(description="REQUIRED for local (absolute path to source directory) and github (an https URL on github.com or gitlab.com ONLY, e.g. https://github.com/user/repo — other hosts/schemes/credentials/ports are rejected). OPTIONAL for snippet: a short human label for the pasted code (e.g. a function name); when omitted the server derives one from the filename/language.")] = None,
+        source_path: Annotated[Optional[str], Field(description="REQUIRED for local (absolute path to source directory) and github (an https URL on github.com or gitlab.com ONLY, e.g. https://github.com/user/repo; additionally ssh:// URLs on hosts the operator allowlisted via GIT_CLONE_EXTRA_HOSTS, e.g. ssh://git@192.168.152.14:3000/user/repo.git — embedded credentials are always rejected). OPTIONAL for snippet: a short human label for the pasted code (e.g. a function name); when omitted the server derives one from the filename/language.")] = None,
         language: Annotated[str, Field(description="Programming language - one of: java, c, cpp, javascript, python, go, kotlin, csharp, ghidra, jimple, php, ruby, swift. REQUIRED for local/github. For a snippet whose code carries a <code language=\"...\"> tag, the tag's language wins and this is optional.")] = "",
         code: Annotated[Optional[str], Field(description="Required when source_type='snippet'. Wrap the code in a <code language=\"LANG\"> ... </code> tag where LANG is a supported language id, e.g. <code language=\"c\">int main(){...}</code>. Multiple blocks are concatenated but must share one language. Ignored for local/github.")] = None,
         filename: Annotated[Optional[str], Field(description="Optional filename for a snippet (e.g. 'parser.c'); defaults to snippet.<ext> from the language. Ignored for local/github.")] = None,
-        github_token: Annotated[Optional[str], Field(description="GitHub Personal Access Token for private repositories (optional)")] = None,
+        github_token: Annotated[Optional[str], Field(description="Access token for private github.com/gitlab.com repositories (optional; sent as the clone URL username). Custom GIT_CLONE_EXTRA_HOSTS servers authenticate via the operator's ssh key instead — a token is not used there. Never embed the token in the URL.")] = None,
         branch: Annotated[Optional[str], Field(description="Specific git branch to checkout (optional, defaults to default branch)")] = None,
         force: Annotated[bool, Field(description="Skip the large-project size warning. Set to True only after the user has explicitly confirmed they want to analyze the full project.")] = False,
         include_paths: Annotated[Optional[list], Field(description="C/C++ only: extra header include directories for c2cpg (--include). Relative paths resolve against the source root (e.g. 'include', '_build/include'); absolute paths pass through. Use when a project's generated headers (e.g. a configure/cmake-produced xmlversion.h or config.h) gate code behind feature macros — the source root, any include/ dir, and dirs containing config.h/*version*.h are auto-detected, so this is only needed for non-standard layouts.")] = None,
@@ -1827,7 +1835,8 @@ Examples:
                 if _cfg and getattr(_cfg.server, "chat_deploy", False):
                     raise ValidationError(
                         "source_type='local' is disabled in this deployment. Provide a "
-                        "github.com or gitlab.com repository URL with source_type='github', "
+                        "github.com or gitlab.com repository URL (or one on a configured "
+                        "GIT_CLONE_EXTRA_HOSTS server) with source_type='github', "
                         "or paste the code with source_type='snippet'."
                     )
             # For snippets the code may be wrapped in <code language="..."> tags;

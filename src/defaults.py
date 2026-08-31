@@ -66,6 +66,29 @@ SERVER_LOG_BACKUP_COUNT = 5
 # generate_cpg: a chat-facing MCP must never expose arbitrary host filesystem
 # paths. Callers use a github.com/gitlab.com URL or a pasted snippet instead.
 CHAT_DEPLOY = False
+
+# --- Custom git clone servers (self-hosted Forgejo / Gitea / GitLab, ...) ----
+# Beyond the built-in github.com/gitlab.com https allowlist, an operator can
+# allowlist their own git server(s) for cloning via generate_cpg. Addresses are
+# configured through the environment so a LAN deployment needs no code changes:
+#   GIT_CLONE_EXTRA_HOSTS   ','-separated `host[:port]` entries accepted in
+#                           addition to github.com/gitlab.com. A bare host means
+#                           port 22 only; `host:port` pins that port; `host:*`
+#                           allows any port on it. Custom hosts are cloned over
+#                           ssh:// only (github.com/gitlab.com stay https-only).
+#                           Parsed at startup — a malformed value fails the boot.
+#   GIT_CLONE_SSH_KEY_PATH  Private key for ssh:// clones of custom hosts.
+#   GIT_CLONE_SSH_KNOWN_HOSTS
+#                           known_hosts file pinning the custom servers' host
+#                           keys (StrictHostKeyChecking=yes). Unset = accept-new,
+#                           i.e. trust-on-first-use.
+#   GIT_CLONE_SSH_COMMAND   Full ssh command override (takes precedence over the
+#                           key path; passed to git as GIT_SSH_COMMAND).
+GIT_CLONE_EXTRA_HOSTS = ""
+GIT_CLONE_SSH_KEY_PATH = ""
+GIT_CLONE_SSH_KNOWN_HOSTS = ""
+GIT_CLONE_SSH_COMMAND = ""
+
 # Optional ':'-separated allowlist of host directory roots that source_type=
 # 'local' paths must canonically resolve within. Empty = no allowlist (the
 # denylist + symlink-resolving canonicalization in resolve_host_path still apply).

@@ -33,7 +33,7 @@ from src.services import (
     QueryExecutor,
     CodeBrowsingService
 )
-from src.utils import setup_logging
+from src.utils import setup_logging, validate_extra_repo_hosts_config
 from src.utils import compute_recommendation, current_from_config, render_recommendation
 from src.startup_tuning import apply_startup_tuning, container_mem_limit_mb, parse_mem_to_mb
 from src.health import (
@@ -373,6 +373,11 @@ async def app_lifespan(server: FastMCP):
         log_backup_count=config.server.log_backup_count,
     )
     logger.info("Starting CodeBadger Server")
+
+    # Fail the boot on a typo'd GIT_CLONE_EXTRA_HOSTS rather than letting it sit
+    # latent until the first ssh:// clone (github/gitlab clones would keep
+    # working, hiding the misconfiguration from the operator).
+    validate_extra_repo_hosts_config()
 
     # Print the memory-aware configuration envelope before the heavy service
     # init, flag drift that risks an OOM cascade, and auto-derive an unset Joern

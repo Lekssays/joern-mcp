@@ -1,0 +1,3 @@
+# Default mount source for GIT_CLONE_SSH_KEYS_HOST_DIR (docker-compose).
+# Place an operator deploy key here as id_ed25519 (and optionally known_hosts).
+# Everything in this directory except this file is gitignored.

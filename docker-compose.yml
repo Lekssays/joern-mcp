@@ -54,6 +54,13 @@ services:
       # DOCKER_HOST) for a rootless / non-default socket; container side stays fixed.
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       - ./logs:/app/logs
+      # Operator ssh key dir for GIT_CLONE_EXTRA_HOSTS clones, mounted READ-ONLY
+      # at the fixed in-container path /keys. Point GIT_CLONE_SSH_KEYS_HOST_DIR
+      # (.env) at a HOST dir containing the private key as id_ed25519; the key
+      # then resolves to /keys/id_ed25519 inside this container (see the env
+      # below). Unset => an empty dir is mounted and no key path is set — no
+      # behavior change.
+      - ${GIT_CLONE_SSH_KEYS_HOST_DIR:-./.ssh-keys}:/keys:ro
     environment:
       # 0.0.0.0 = reachable on all interfaces. Set MCP_HOST=127.0.0.1 to bind
       # loopback only (e.g. when a reverse proxy / socat already fronts it).
@@ -96,6 +103,21 @@ services:
       # this container — local sources live under /app/playground here.
       CHAT_DEPLOY: ${CHAT_DEPLOY:-false}
       ALLOWED_SOURCE_ROOTS: ${ALLOWED_SOURCE_ROOTS:-}
+      # Custom git clone servers (optional) — allowlist your own git host
+      # (e.g. a LAN Forgejo) beyond github.com/gitlab.com. ssh:// clones auth
+      # via the mounted key (below) or a full GIT_CLONE_SSH_COMMAND.
+      GIT_CLONE_EXTRA_HOSTS: ${GIT_CLONE_EXTRA_HOSTS:-}
+      # In the dockerized stack the key's in-container path is DERIVED from
+      # GIT_CLONE_SSH_KEYS_HOST_DIR (the host dir mounted at /keys above).
+      # GIT_CLONE_SSH_KEY_PATH is a host-run-MCP setting and is deliberately
+      # NOT passed through here — a host path would never resolve in-container.
+      GIT_CLONE_SSH_KEY_PATH: ${GIT_CLONE_SSH_KEYS_HOST_DIR:+/keys/id_ed25519}
+      # Optional host-key pinning. Like GIT_CLONE_SSH_COMMAND this is an
+      # IN-CONTAINER path: drop a known_hosts next to the key and set
+      # GIT_CLONE_SSH_KNOWN_HOSTS=/keys/known_hosts. Unset => accept-new, whose
+      # record lives in the container and is lost on every recreate.
+      GIT_CLONE_SSH_KNOWN_HOSTS: ${GIT_CLONE_SSH_KNOWN_HOSTS:-}
+      GIT_CLONE_SSH_COMMAND: ${GIT_CLONE_SSH_COMMAND:-}
     depends_on:
       codebadger-postgres:
         condition: service_healthy

@@ -3,13 +3,18 @@ Input validation utilities
 """
 
 import hashlib
+import ipaddress
+import logging
 import os
 import re
-from typing import Optional
-from urllib.parse import urlparse
+from typing import Dict, Optional
+from urllib.parse import ParseResult, urlparse
 
+from .. import defaults
 from ..exceptions import ValidationError
 from ..models import SourceType
+
+logger = logging.getLogger(__name__)
 
 
 def validate_source_type(source_type: str) -> None:
@@ -63,9 +68,10 @@ def validate_codebase_hash(codebase_hash: str) -> None:
 
 
 
-# Only these hosts may be cloned. Anything else — alternate git hosts, raw IPs,
-# localhost, cloud metadata endpoints (169.254.169.254), etc. — is rejected so a
-# repo URL can't be turned into an SSRF probe or an undefined-behavior clone.
+# Only these hosts may be cloned by default. Anything else — alternate git hosts,
+# raw IPs, localhost, cloud metadata endpoints (169.254.169.254), etc. — is
+# rejected so a repo URL can't be turned into an SSRF probe or an
+# undefined-behavior clone.
 ALLOWED_REPO_HOSTS = frozenset(
     {"github.com", "www.github.com", "gitlab.com", "www.gitlab.com"}
 )
@@ -79,22 +85,173 @@ ALLOWED_REPO_URL_PREFIXES = tuple(
     sorted(f"https://{host}/" for host in ALLOWED_REPO_HOSTS)
 )
 
+# Operators can extend the allowlist with their own git servers (e.g. a LAN
+# Forgejo) via GIT_CLONE_EXTRA_HOSTS — see src/defaults.py. Hostnames / IPv4,
+# optionally with a port; IPv6 goes in brackets. Used as a building block for
+# both the entry syntax below and as a matcher against parsed URL hostnames.
+_EXTRA_HOST_ENTRY_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+# ssh's default port. A bare `host` entry allows ONLY this port: an entry is a
+# statement about one git server, not a licence to reach every service on that
+# machine. Widening to every port is possible but must be spelled out (`host:*`).
+SSH_DEFAULT_PORT = 22
+_ANY_PORT = "*"
+
+
+def _normalize_extra_host(host: str) -> str:
+    """Canonical comparison key for an allowlist host or a URL hostname.
+
+    Lowercased, and IPv6 literals are collapsed to their canonical compressed
+    form so ``[0:0:0:0:0:0:0:1]`` and ``[::1]`` are the same entry (urlparse
+    hands back the literal text between the brackets, un-normalized).
+    """
+    key = host.lower()
+    if ":" in key:  # only an IPv6 literal can contain a colon here
+        try:
+            return ipaddress.IPv6Address(key).compressed
+        except ValueError:
+            return key
+    return key
+
+
+def _extra_repo_host_entries() -> Dict[str, Optional[set]]:
+    """Parse GIT_CLONE_EXTRA_HOSTS into ``{hostname: ports | None}``.
+
+    Each entry is ``host``, ``host:port`` or ``host:*`` (comma-separated):
+
+      * ``host``      → port 22 only (ssh's default),
+      * ``host:port`` → that port only,
+      * ``host:*``    → any port on that host (``None`` in the returned map).
+
+    A malformed entry raises ValidationError so a typo'd config fails loudly
+    instead of silently widening (or narrowing) the allowlist. The message
+    quotes the offending entry and is for the operator: callers get the
+    redacted version raised by :func:`is_extra_repo_host`.
+    """
+    raw = os.getenv("GIT_CLONE_EXTRA_HOSTS", defaults.GIT_CLONE_EXTRA_HOSTS)
+    hosts: Dict[str, Optional[set]] = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if "/" in entry or "@" in entry or "?" in entry or "#" in entry:
+            raise ValidationError(
+                f"Invalid GIT_CLONE_EXTRA_HOSTS entry '{entry}' "
+                "(expected 'host', 'host:port' or 'host:*')"
+            )
+        if entry.startswith("["):  # [ipv6] or [ipv6]:port
+            host, closed, suffix = entry[1:].partition("]")
+            if not closed:
+                raise ValidationError(
+                    f"Invalid GIT_CLONE_EXTRA_HOSTS entry '{entry}' (unclosed ']')"
+                )
+            port_str = ""
+            if suffix:
+                if not suffix.startswith(":"):
+                    raise ValidationError(
+                        f"Invalid GIT_CLONE_EXTRA_HOSTS entry '{entry}' "
+                        "(expected '[host]:port')"
+                    )
+                port_str = suffix[1:]
+            try:
+                ipaddress.IPv6Address(host)
+            except ValueError:
+                raise ValidationError(
+                    f"Invalid GIT_CLONE_EXTRA_HOSTS entry '{entry}' (bad IPv6 host)"
+                )
+        else:
+            host, sep, port_str = entry.rpartition(":")
+            if not sep:
+                host, port_str = port_str, ""
+            if not _EXTRA_HOST_ENTRY_RE.match(host):
+                raise ValidationError(
+                    f"Invalid GIT_CLONE_EXTRA_HOSTS entry '{entry}' (bad host)"
+                )
+        host = _normalize_extra_host(host)
+        # No port on the entry = ssh's default port, NOT "any port".
+        ports: Optional[set] = {SSH_DEFAULT_PORT}
+        if port_str == _ANY_PORT:
+            ports = None
+        elif port_str:
+            if not port_str.isdigit() or not (1 <= int(port_str) <= 65535):
+                raise ValidationError(
+                    f"Invalid GIT_CLONE_EXTRA_HOSTS entry '{entry}' (bad port)"
+                )
+            ports = {int(port_str)}
+        if host in hosts:
+            # A second entry for the same host either widens to any port
+            # (`host:*`) or unions the pinned ports.
+            existing = hosts[host]
+            if existing is None or ports is None:
+                hosts[host] = None
+            else:
+                hosts[host] = existing | ports
+        else:
+            hosts[host] = ports
+    return hosts
+
+
+def validate_extra_repo_hosts_config() -> Dict[str, Optional[set]]:
+    """Parse GIT_CLONE_EXTRA_HOSTS once at startup so a typo fails the boot.
+
+    Without this the config is only parsed when a caller happens to submit an
+    ssh:// URL, so a misconfiguration would sit latent (github/gitlab clones
+    keep working) until the first custom-host clone. Raises ValidationError.
+    """
+    return _extra_repo_host_entries()
+
+
+def is_extra_repo_host(hostname: Optional[str], port: Optional[int]) -> bool:
+    """True when hostname/port match an operator-configured GIT_CLONE_EXTRA_HOSTS
+    entry (bare host = port 22; ``host:port`` = that port; ``host:*`` = any).
+
+    ``port`` is the port parsed from the URL, or None when it carried none — in
+    which case ssh's default 22 is what a clone would actually dial, so that is
+    what gets matched.
+    """
+    if not hostname:
+        return False
+    try:
+        entries = _extra_repo_host_entries()
+    except ValidationError as e:
+        # The operator's raw config must not leak to an MCP caller; it is
+        # logged for them instead. Startup already refuses to boot on this,
+        # so reaching here means the env changed under a running server.
+        logger.error("GIT_CLONE_EXTRA_HOSTS is misconfigured: %s", e)
+        raise ValidationError(
+            "The repository host allowlist is misconfigured on this server; "
+            "contact the operator"
+        ) from None
+    key = _normalize_extra_host(hostname)
+    if key not in entries:
+        return False
+    allowed_ports = entries[key]
+    return allowed_ports is None or (port or SSH_DEFAULT_PORT) in allowed_ports
+
 
 def validate_repo_url(url: str) -> bool:
-    """Strictly validate a remote git repository URL (github.com / gitlab.com).
+    """Strictly validate a remote git repository URL.
 
-    Hardened against SSRF and undefined clone behavior. The URL MUST:
-      * be a string with no whitespace or control characters,
-      * use the ``https`` scheme (rejects ``git://``, ``ssh://``, ``http://``,
-        ``file://``, ``data:``, scp-style ``git@host:path``, …),
-      * carry no embedded credentials (``https://user:tok@…`` is rejected so the
-        host can't be smuggled past the allowlist via the userinfo field),
-      * resolve to an exact allowlisted host (``parsed.hostname`` is lowercased
-        and excludes userinfo/port, so ``github.com@evil.com`` → host ``evil.com``
-        → rejected),
-      * use no non-default port,
-      * have an ``/owner/repo`` path (gitlab subgroups, i.e. extra segments, are
-        allowed).
+    Hardened against SSRF and undefined clone behavior. Accepted URLs:
+      * ``https://github.com/…`` / ``https://gitlab.com/…`` — the built-in
+        default: https only, default port only, no embedded credentials;
+      * ``ssh://[user@]<custom-host>/…`` where ``<custom-host>`` is listed in
+        the operator's ``GIT_CLONE_EXTRA_HOSTS`` (e.g. a self-hosted Forgejo at
+        ``ssh://git@192.168.152.14:3000``). Custom hosts are ssh-only (no
+        http(s) cloning); the port must be one the entry allows (a bare
+        ``host`` entry means port 22 only, ``host:port`` pins that port, and
+        ``host:*`` allows any), and the URL may carry a username (``git@``)
+        but no password.
+
+    For every URL, regardless of host:
+      * no whitespace or control characters,
+      * no embedded credentials in http(s) URLs (the host can't be smuggled
+        past the allowlist via the userinfo field),
+      * hostname matches the allowlist EXACTLY (``parsed.hostname`` is
+        lowercased and excludes userinfo/port, so ``github.com@evil.com`` →
+        host ``evil.com`` → rejected; ``github.com.evil.com`` is a different
+        host and rejected too),
+      * an ``/owner/repo`` path (nested subgroups / extra segments are fine).
     """
     if not url or not isinstance(url, str):
         raise ValidationError("Repository URL must be a non-empty string")
@@ -105,50 +262,85 @@ def validate_repo_url(url: str) -> bool:
             "Repository URL must not contain whitespace or control characters"
         )
 
-    # Literal prefix gate: the string must START with an exact allowed
-    # `https://<host>/` prefix. Belt-and-suspenders with the parsed hostname
-    # check below — the literal match is case-sensitive and rejects anything
-    # that isn't canonically lowercase https://github.com/ or https://gitlab.com/.
-    if not url.startswith(ALLOWED_REPO_URL_PREFIXES):
-        raise ValidationError(
-            "Repository URL must start with one of: "
-            + ", ".join(ALLOWED_REPO_URL_PREFIXES)
-        )
-
     try:
         parsed = urlparse(url)
     except Exception as e:
         raise ValidationError(f"Invalid repository URL: {e}")
 
-    if parsed.scheme != "https":
-        raise ValidationError(
-            f"Repository URL must use https:// (got '{parsed.scheme or 'no scheme'}')"
-        )
-
-    if parsed.username or parsed.password:
-        raise ValidationError("Repository URL must not contain embedded credentials")
-
-    if parsed.hostname not in ALLOWED_REPO_HOSTS:
-        raise ValidationError(
-            "Only github.com and gitlab.com repositories are supported "
-            f"(got host '{parsed.hostname}')"
-        )
-
     try:
         port = parsed.port
     except ValueError:
         raise ValidationError("Repository URL has an invalid port")
-    if port is not None and port != 443:
-        raise ValidationError("Repository URL must not specify a non-default port")
 
-    # Path must be at least /owner/repo.
+    scheme = parsed.scheme.lower()
+
+    if scheme in ("http", "https"):
+        if parsed.username or parsed.password:
+            raise ValidationError(
+                "Repository URL must not contain embedded credentials"
+            )
+        if parsed.hostname in ALLOWED_REPO_HOSTS:
+            # Built-in hosts keep the strictest posture: https, default port,
+            # and a canonical lowercase literal `https://<host>/` prefix
+            # (belt-and-suspenders with the parsed hostname check — also
+            # rejects userinfo smuggling and ports before any parsing).
+            if scheme != "https":
+                raise ValidationError(
+                    f"Repository URL must use https:// (got '{scheme}')"
+                )
+            if port is not None and port != 443:
+                raise ValidationError(
+                    "Repository URL must not specify a non-default port"
+                )
+            if not url.startswith(ALLOWED_REPO_URL_PREFIXES):
+                raise ValidationError(
+                    "Repository URL must start with one of: "
+                    + ", ".join(ALLOWED_REPO_URL_PREFIXES)
+                )
+            return _validate_repo_url_path(parsed)
+        raise ValidationError(
+            "Only github.com and gitlab.com repositories are supported over "
+            "http(s) (clone a GIT_CLONE_EXTRA_HOSTS server over ssh:// instead; "
+            f"got host '{parsed.hostname}')"
+        )
+
+    if scheme == "ssh":
+        if parsed.password:
+            raise ValidationError(
+                "ssh repository URLs must not contain an embedded password"
+            )
+        # Must start alphanumeric: a leading '-' would reach ssh's argv as an
+        # option rather than a login name. git blocks that downstream too — this
+        # is the same belt-and-suspenders posture the rest of this file keeps.
+        if parsed.username and not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]*", parsed.username
+        ):
+            raise ValidationError("Invalid username in ssh repository URL")
+        # urlparse accepts port 0 (it only range-checks the upper bound), and a
+        # `host:*` entry would otherwise let it through.
+        if port is not None and not (1 <= port <= 65535):
+            raise ValidationError("Repository URL has an invalid port")
+        if is_extra_repo_host(parsed.hostname, port):
+            return _validate_repo_url_path(parsed)
+        raise ValidationError(
+            "ssh:// repository URLs are only supported for hosts configured "
+            f"in GIT_CLONE_EXTRA_HOSTS (got host '{parsed.hostname}')"
+        )
+
+    raise ValidationError(
+        f"Repository URL must use https:// (or ssh:// for a host listed "
+        f"in GIT_CLONE_EXTRA_HOSTS); got '{scheme or 'no scheme'}'"
+    )
+
+
+def _validate_repo_url_path(parsed: ParseResult) -> bool:
+    """Path check shared by every accepted scheme: at least /owner/repo."""
     parts = [p for p in parsed.path.strip("/").split("/") if p]
     if len(parts) < 2:
         raise ValidationError(
-            "Invalid repository URL. Expected https://github.com/owner/repo "
-            "or https://gitlab.com/owner/repo"
+            "Invalid repository URL. Expected https://github.com/owner/repo, "
+            "https://gitlab.com/owner/repo, or ssh://<custom-host>/owner/repo"
         )
-
     return True
 
 
