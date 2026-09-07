@@ -17,14 +17,11 @@ ARG DOCKER_CLI_ARCH=x86_64
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
-        curl \
         ca-certificates \
-    && curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_CLI_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz" \
-        | tar -xz -C /usr/local/bin --strip-components=1 docker/docker \
-    && docker --version \
-    && apt-get purge -y curl \
-    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
+
+# Copy docker static client binary from official docker image (multi-stage)
+COPY --from=docker:29.5.3-cli /usr/local/bin/docker /usr/local/bin/docker
 
 WORKDIR /app
 

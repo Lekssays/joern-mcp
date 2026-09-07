@@ -32,6 +32,20 @@ dist/
 # Tests & docs aren't needed at runtime
 tests/
 docs/
+.planning/
+.agents/
+.claude/
+.codex/
+.github/
+
+# Markdown / docs
+*.md
+
+# Config and local files
+config.example.yaml
+pytest.ini
+pyproject.toml
+.flake8
 
 # Don't ship local plans/scratch
 *.log

@@ -53,6 +53,8 @@ jobs:
           tags: |
             ${{ env.IMAGE_PREFIX }}/codebadger-mcp:${{ steps.image.outputs.tag }}
             ${{ env.IMAGE_PREFIX }}/codebadger-mcp:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build and publish Joern image
         uses: docker/build-push-action@v7
@@ -64,6 +66,8 @@ jobs:
           tags: |
             ${{ env.IMAGE_PREFIX }}/codebadger-joern-server:${{ steps.image.outputs.tag }}
             ${{ env.IMAGE_PREFIX }}/codebadger-joern-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy:
     needs: build-and-push

@@ -38,7 +38,8 @@ ENV PATH="${JOERN_HOME}/joern-cli:${JOERN_HOME}/joern-cli/bin:${PATH}"
 # just rustc + cargo (no docs/clippy/rustfmt) to keep the layer small.
 ENV RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo
-RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable \
+    && rm -rf /opt/rustup/downloads /opt/rustup/tmp /opt/rustup/toolchains/*/share/doc /opt/rustup/toolchains/*/share/man
 ENV PATH="/opt/cargo/bin:${PATH}"
 
 RUN mkdir -p /playground
