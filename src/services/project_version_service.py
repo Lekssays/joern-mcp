@@ -276,16 +276,22 @@ class ProjectVersionService:
             )
             return version, "created"
 
-    def get_version(self, version_id: str, owner_scope: str = "default") -> Optional[ProjectVersion]:
+    def get_version(self, version_id: str, owner_scope: Optional[str] = None) -> Optional[ProjectVersion]:
         with self.db._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT pv.* FROM project_versions pv
-                JOIN projects p ON pv.project_id = p.id
-                WHERE pv.id = %s AND p.owner_scope = %s
-                """,
-                (version_id, owner_scope),
-            ).fetchone()
+            if owner_scope:
+                row = conn.execute(
+                    """
+                    SELECT pv.* FROM project_versions pv
+                    JOIN projects p ON pv.project_id = p.id
+                    WHERE pv.id = %s AND p.owner_scope = %s
+                    """,
+                    (version_id, owner_scope),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM project_versions WHERE id = %s",
+                    (version_id,),
+                ).fetchone()
             return ProjectVersion.from_dict(dict(row)) if row else None
 
     def cancel_version_build(
@@ -423,15 +429,25 @@ class ProjectVersionService:
 
         return updated_version, "queued"
 
-    def list_versions(self, project_id: str, owner_scope: str = "default") -> List[ProjectVersion]:
+    def list_versions(self, project_id: str, owner_scope: Optional[str] = None) -> List[ProjectVersion]:
         with self.db._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT pv.* FROM project_versions pv
-                JOIN projects p ON pv.project_id = p.id
-                WHERE pv.project_id = %s AND p.owner_scope = %s
-                ORDER BY pv.created_at DESC
-                """,
-                (project_id, owner_scope),
-            ).fetchall()
+            if owner_scope:
+                rows = conn.execute(
+                    """
+                    SELECT pv.* FROM project_versions pv
+                    JOIN projects p ON pv.project_id = p.id
+                    WHERE pv.project_id = %s AND p.owner_scope = %s
+                    ORDER BY pv.created_at DESC
+                    """,
+                    (project_id, owner_scope),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM project_versions
+                    WHERE project_id = %s
+                    ORDER BY created_at DESC
+                    """,
+                    (project_id,),
+                ).fetchall()
             return [ProjectVersion.from_dict(dict(r)) for r in rows]

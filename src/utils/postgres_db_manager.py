@@ -156,6 +156,19 @@ class PostgresDBManager(PostgresJobStore):
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_project_versions_project ON project_versions(project_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_project_versions_sha ON project_versions(commit_sha)")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    tenant_id TEXT NOT NULL,
+                    roles TEXT NOT NULL DEFAULT 'user',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_users_tenant_id ON users(tenant_id)")
             conn.commit()
         logger.info("Postgres catalog/cache/findings schema ready")
 

@@ -204,3 +204,12 @@ def _dict_to_config(data: dict) -> Config:
         storage=convert_config_section(StorageConfig, data.get("storage", {})),
         telemetry=convert_config_section(TelemetryConfig, data.get("telemetry", {})),
     )
+
+# Phase 8: Auth, Quotas & Security
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", defaults.JWT_SECRET_KEY)
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", defaults.JWT_ALGORITHM)
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(defaults.ACCESS_TOKEN_EXPIRE_MINUTES)))
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", str(defaults.REFRESH_TOKEN_EXPIRE_DAYS)))
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", str(defaults.RATE_LIMIT_PER_MINUTE)))
+MAX_CONCURRENT_BUILDS_PER_TENANT = int(os.getenv("MAX_CONCURRENT_BUILDS_PER_TENANT", str(defaults.MAX_CONCURRENT_BUILDS_PER_TENANT)))
+MAX_PAYLOAD_SIZE_BYTES = int(os.getenv("MAX_PAYLOAD_SIZE_BYTES", str(defaults.MAX_PAYLOAD_SIZE_BYTES)))

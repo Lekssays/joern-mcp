@@ -426,3 +426,12 @@ MAX_RESULT_ROWS = 10000           # hard ceiling on rows a single query may retu
 MAX_QUERY_OUTPUT_BYTES = 5_000_000  # max raw Joern stdout we will parse / return
 MAX_SEARCH_PATTERN_LEN = 512      # max length of a caller-supplied regex/name filter
 MAX_TRAVERSAL_DEPTH = 64          # max caller-supplied graph depth (call-graph / slice)
+
+# Phase 8: Auth, Quotas & Security
+JWT_SECRET_KEY = "dev-secret-change-in-production"
+JWT_ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+REFRESH_TOKEN_EXPIRE_DAYS = 7
+RATE_LIMIT_PER_MINUTE = 120
+MAX_CONCURRENT_BUILDS_PER_TENANT = 2
+MAX_PAYLOAD_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB

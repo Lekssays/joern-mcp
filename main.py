@@ -58,6 +58,12 @@ from src.utils.postgres_db_manager import PostgresDBManager
 # unreachable Postgres/Redis fails the boot (fail-fast), see app_lifespan.
 from src.defaults import resolve_database_url, resolve_redis_url
 from src.api.rest_routes import register_rest_routes
+from src.services.auth_service import AuthService
+from src.services.audit_logger import AuditLogger
+from src.api.auth_middleware import AuthMiddleware
+from src.api.correlation_middleware import CorrelationMiddleware
+from src.api.error_sanitizer import ErrorSanitizerMiddleware
+from src.api.rate_limiter import RateLimitMiddleware
 from src.tools import register_tools
 from src.tools.lifecycle_tools import register_lifecycle_tools
 
@@ -549,6 +555,12 @@ async def app_lifespan(server: FastMCP):
         # can enqueue a CPG build immediately.
         version_service = ProjectVersionService(db_manager)
         services['version_service'] = version_service
+
+        # Phase 8: Auth & Audit Services
+        auth_service = AuthService(db=db_manager)
+        services['auth_service'] = auth_service
+        audit_logger = AuditLogger()
+        services['audit_logger'] = audit_logger
         services['git_sync_service'] = GitSyncService(
             config.storage.workspace_root, version_service
         )
@@ -958,5 +970,11 @@ if __name__ == "__main__":
 
     logger.info(f"Starting CodeBadger Server with HTTP transport on {host}:{port}")
 
-    _http_middleware = [Middleware(ConcurrencyLimitMiddleware, max_concurrent=_max_mcp)]
+    _http_middleware = [
+        Middleware(ErrorSanitizerMiddleware),
+        Middleware(CorrelationMiddleware),
+        Middleware(AuthMiddleware, auth_service=services.get("auth_service") or AuthService()),
+        Middleware(RateLimitMiddleware),
+        Middleware(ConcurrencyLimitMiddleware, max_concurrent=_max_mcp),
+    ]
     asyncio.run(mcp.run_http_async(host=host, port=port, middleware=_http_middleware))

@@ -11,6 +11,7 @@ def register_lifecycle_tools(mcp: Any, services: Dict[str, Any]):
     git_sync_service = services.get("git_sync_service")
     archive_service = services.get("archive_service")
     cpg_queue = services.get("cpg_queue")
+    context_service = services.get("context_service")
 
     @mcp.tool()
     def project_create(
@@ -42,15 +43,22 @@ def register_lifecycle_tools(mcp: Any, services: Dict[str, Any]):
         project_id: str,
         branch: str = None,
         build_config: dict = None,
+        owner_scope: str = "default",
     ) -> Dict[str, Any]:
         """Fetch remote branch updates, create version, and trigger CPG build."""
+        p = version_service.get_project(project_id, owner_scope)
+        if not p:
+            raise ValueError("Project not found or unauthorized")
         v_dict, status = await git_sync_service.sync_project_branch(project_id, branch, build_config)
-        v = version_service.get_version(v_dict["id"])
+        v = version_service.get_version(v_dict["id"], owner_scope)
         return format_version_response(v)
 
     @mcp.tool()
     def version_list(project_id: str, owner_scope: str = "default") -> list:
         """List all version build states for a project."""
+        p = version_service.get_project(project_id, owner_scope)
+        if not p:
+            raise ValueError("Project not found or unauthorized")
         versions = version_service.list_versions(project_id, owner_scope)
         return [format_version_response(v) for v in versions]
 
@@ -59,17 +67,39 @@ def register_lifecycle_tools(mcp: Any, services: Dict[str, Any]):
         """Get build status details and observability metadata for a version."""
         v = version_service.get_version(version_id, owner_scope)
         if not v:
-            raise ValueError("Version not found")
+            raise ValueError("Version not found or unauthorized")
         return format_version_response(v)
 
     @mcp.tool()
     def version_retry(version_id: str, owner_scope: str = "default") -> Dict[str, Any]:
         """Retry a failed or cancelled version build."""
-        v, status = version_service.retry_version_build(version_id, queue=cpg_queue, owner_scope=owner_scope)
-        return format_version_response(v)
+        v = version_service.get_version(version_id, owner_scope)
+        if not v:
+            raise ValueError("Version not found or unauthorized")
+        v_retried, status = version_service.retry_version_build(version_id, queue=cpg_queue, owner_scope=owner_scope)
+        return format_version_response(v_retried)
 
     @mcp.tool()
     def version_cancel(version_id: str, owner_scope: str = "default") -> Dict[str, Any]:
         """Cancel an active version build and purge partial artifacts."""
         v, ok = version_service.cancel_version_build(version_id, owner_scope=owner_scope)
         return format_version_response(v)
+
+    @mcp.tool()
+    def version_context(
+        version_id: str,
+        query: str,
+        owner_scope: str = "default",
+        max_items: int = 10,
+        max_bytes: int = 50000,
+    ) -> Dict[str, Any]:
+        """Retrieve focused code context for a version with tenant isolation."""
+        if not context_service:
+            raise ValueError("Context service not available")
+        return context_service.get_context(
+            version_id=version_id,
+            query=query,
+            owner_scope=owner_scope,
+            max_items=max_items,
+            max_bytes=max_bytes,
+        )

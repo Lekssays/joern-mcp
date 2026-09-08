@@ -22,8 +22,8 @@
 
 - [ ] **API-01**: REST endpoints support project creation, archive upload, version listing/detail, build/status, and deletion.
 - [ ] **API-02**: MCP lifecycle tools call the same application services and return IDs/status schemas compatible with REST.
-- [ ] **API-03**: Authentication, project/version authorization, and an audit record protect every public lifecycle and context operation.
-- [ ] **API-04**: Upload/build/context operations enforce quotas, queue backpressure, correlation IDs, metrics, and sanitized operator diagnostics.
+- [x] **API-03**: Authentication, project/version authorization, and an audit record protect every public lifecycle and context operation.
+- [x] **API-04**: Upload/build/context operations enforce quotas, queue backpressure, correlation IDs, metrics, and sanitized operator diagnostics.
 
 ### Agent Context
 
@@ -63,8 +63,8 @@
 | CPG-04 | Phase 6 | Pending |
 | API-01 | Phase 6 | Pending |
 | API-02 | Phase 6 | Pending |
-| API-03 | Phase 8 | Pending |
-| API-04 | Phase 8 | Pending |
+| API-03 | Phase 8 | Satisfied |
+| API-04 | Phase 8 | Satisfied |
 | CTX-01 | Phase 7 | Pending |
 | CTX-02 | Phase 7 | Pending |
 | CTX-03 | Phase 7 | Pending |
