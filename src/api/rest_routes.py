@@ -186,6 +186,28 @@ def build_openapi_schema() -> dict:
                         "200": {"description": "Project deleted"},
                         "404": {"description": "Project not found"}
                     }
+                },
+                "patch": {
+                    "summary": "Update project settings like default branch",
+                    "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "default_branch": {"type": "string"}
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {"description": "Project updated"},
+                        "400": {"description": "Validation error"},
+                        "404": {"description": "Project not found"}
+                    }
                 }
             },
             "/projects/{id}/sync": {
@@ -535,6 +557,35 @@ def register_rest_routes(app: Any, services: Dict[str, Any]) -> None:
         audit_logger.log_event("project.delete", resource_id=project_id, status_code=200, actor=actor, tenant_id=tenant)
         return JSONResponse({"status": "deleted"})
 
+    async def update_project(request: Request) -> JSONResponse:
+        version_service = services["version_service"]
+        project_id = request.path_params["id"]
+        tenant_id, is_admin = get_tenant_context(request)
+        p = version_service.get_project(project_id, owner_scope=None if is_admin else tenant_id)
+        if not p:
+            return JSONResponse({"error": "Project not found"}, status_code=404)
+
+        try:
+            data = await request.json()
+        except Exception:
+            return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+        new_branch = data.get("default_branch")
+        if not new_branch:
+            return JSONResponse({"error": "Missing or empty 'default_branch'"}, status_code=400)
+
+        from ..exceptions import ValidationError
+        try:
+            ok = version_service.update_project_branch(project_id, new_branch, owner_scope=p.owner_scope)
+            if not ok:
+                return JSONResponse({"error": "Failed to update project"}, status_code=400)
+            updated_p = version_service.get_project(project_id, owner_scope=p.owner_scope)
+            actor, tenant = get_actor_info(request)
+            audit_logger.log_event("project.update_branch", resource_id=project_id, status_code=200, actor=actor, tenant_id=tenant, metadata={"default_branch": new_branch})
+            return JSONResponse(updated_p.to_dict())
+        except (ValueError, ValidationError) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
     async def sync_version(request: Request) -> JSONResponse:
         version_service = services["version_service"]
         git_sync_service = services.get("git_sync_service")
@@ -795,6 +846,7 @@ def register_rest_routes(app: Any, services: Dict[str, Any]) -> None:
         ("/projects", list_projects, ["GET"]),
         ("/projects/{id}", get_project, ["GET"]),
         ("/projects/{id}", delete_project, ["DELETE"]),
+        ("/projects/{id}", update_project, ["PATCH"]),
         ("/projects/{id}/sync", sync_version, ["POST"]),
         ("/projects/{id}/versions", list_versions, ["GET"]),
         ("/projects/{id}/versions", create_version, ["POST"]),

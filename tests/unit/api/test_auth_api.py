@@ -173,3 +173,45 @@ def test_mcp_vs_rest_token_separation(api_env):
     # 5. Access token also works on MCP endpoints (backward compatibility)
     mcp_ok = client.get("/mcp", headers={"Authorization": f"Bearer {access_token}"})
     assert mcp_ok.status_code == 200
+
+
+def test_update_project_branch_api(api_env):
+    client, auth_service, _ = api_env
+
+    alice_token = auth_service.create_access_token("usr_alice", "tenant-a", ["user"])
+    bob_token = auth_service.create_access_token("usr_bob", "tenant-b", ["user"])
+
+    # Alice creates project with default_branch="main"
+    c_resp = client.post(
+        "/projects",
+        json={"remote_url": "https://github.com/tenant-a/branch-test.git", "default_branch": "main"},
+        headers={"Authorization": f"Bearer {alice_token}"},
+    )
+    assert c_resp.status_code == 201
+    proj_id = c_resp.json()["id"]
+    assert c_resp.json()["default_branch"] == "main"
+
+    # Alice updates default_branch to "develop"
+    patch_resp = client.patch(
+        f"/projects/{proj_id}",
+        json={"default_branch": "develop"},
+        headers={"Authorization": f"Bearer {alice_token}"},
+    )
+    assert patch_resp.status_code == 200
+    assert patch_resp.json()["default_branch"] == "develop"
+
+    # Verify invalid branch name is rejected
+    bad_resp = client.patch(
+        f"/projects/{proj_id}",
+        json={"default_branch": "bad..branch/name"},
+        headers={"Authorization": f"Bearer {alice_token}"},
+    )
+    assert bad_resp.status_code == 400
+
+    # Bob attempts to update Alice project -> 404
+    bob_resp = client.patch(
+        f"/projects/{proj_id}",
+        json={"default_branch": "hacked"},
+        headers={"Authorization": f"Bearer {bob_token}"},
+    )
+    assert bob_resp.status_code == 404

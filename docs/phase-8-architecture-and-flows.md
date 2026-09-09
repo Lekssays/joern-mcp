@@ -78,14 +78,20 @@ Client                      /auth/login                  AuthService            
 ```
 
 1. **Mật khẩu an toàn**: Sử dụng thư viện chuẩn `hashlib.pbkdf2_hmac` với thuật toán SHA-256, chu kỳ 100,000 rounds và chuỗi salt ngẫu nhiên (`secrets.token_hex(16)`). So sánh bằng `hmac.compare_digest` để chống tấn công timing attack.
-2. **Cấu trúc JWT**:
-   - `sub`: User ID duy nhất (`usr_...`).
-   - `tenant_id`: Định danh tổ chức / người sở hữu dữ liệu.
-   - `roles`: Danh sách quyền (`["user"]` hoặc `["admin"]`).
-   - `type`: `access` (hết hạn 60 phút) hoặc `refresh` (hết hạn 7 ngày).
-3. **Quản trị người dùng**:
+2. **Phân loại Token (JWT Claim `type`)**:
+   - `type: "access"`: Token ngắn hạn (60 phút) dùng cho các tác vụ REST API thông thường.
+   - `type: "refresh"`: Token dài hạn (7 ngày) dùng để refresh token cho REST API.
+   - `type: "mcp"`: Token vĩnh viễn (**không có `exp`**), dành riêng cho MCP clients (Claude Code, Cursor, Windsurf...). User chỉ cần sinh 1 lần và dán cố định vào file cấu hình.
+3. **Cơ chế cấp phát Token MCP (`create_mcp_token`)**:
+   - **Qua API**: `POST /auth/mcp-token` với payload `{"username": "...", "password": "..."}`.
+   - **Qua CLI**: `python scripts/seed_admin.py --username ... --password ... --mcp-token`.
+   - **Trực tiếp qua code**: `auth_service.create_mcp_token(user_id, tenant_id, roles)`.
+4. **Phân tách thẩm quyền tại `AuthMiddleware`**:
+   - Nếu request gửi tới các route MCP (`/mcp`, `/sse`, `/messages`): chấp nhận `type in ("mcp", "access")`. Token `mcp` được bỏ qua kiểm tra hạn sử dụng.
+   - Nếu request gửi tới các route REST (`/projects`, `/versions`...): chỉ chấp nhận `type == "access"`, bắt buộc kiểm tra `exp`. Token `mcp` sẽ bị từ chối với mã 401 nếu gọi vào REST API.
+5. **Quản trị người dùng**:
    - Bảng cơ sở dữ liệu `users` lưu thông tin tài khoản.
-   - CLI seeding: `scripts/seed_admin.py --username ... --password ... --tenant-id ... --roles ...`.
+   - CLI seeding: `scripts/seed_admin.py --username ... --password ... --tenant-id ... --roles ... --mcp-token`.
 
 ---
 
@@ -216,6 +222,37 @@ Bất kỳ Unhandled Exception trong Controller / Service
 
 ---
 
+### Luồng 1.1: Cấu hình Token vào MCP Client (Claude Desktop, Claude Code, Cursor)
+
+Sau khi tạo token vĩnh viễn bằng CLI hoặc API `POST /auth/mcp-token`, người dùng cấu hình vào MCP Client theo 1 trong 2 cách:
+
+1. **Gửi qua HTTP Header (Khuyên dùng)** trong `claude_desktop_config.json` hoặc `.cursor/mcp.json`:
+```json
+{
+  "mcpServers": {
+    "codebadger": {
+      "url": "http://127.0.0.1:4242/mcp",
+      "headers": {
+        "Authorization": "Bearer <mcp_token>"
+      }
+    }
+  }
+}
+```
+
+2. **Gửi qua Query Parameter (Dành cho SSE / Browser client không hỗ trợ custom header)**:
+```json
+{
+  "mcpServers": {
+    "codebadger": {
+      "url": "http://127.0.0.1:4242/mcp?token=<mcp_token>"
+    }
+  }
+}
+```
+
+---
+
 ## 3. Danh mục Tệp Mã Nguồn Phase 8
 
 | Đường dẫn tệp | Vai trò / Trách nhiệm |
@@ -226,6 +263,7 @@ Bất kỳ Unhandled Exception trong Controller / Service
 | `src/services/audit_logger.py` | Ghi log kiểm toán định dạng JSON cho mọi thao tác đột biến tài nguyên. |
 | `src/api/rate_limiter.py` | Triển khai thuật toán Token Bucket rate limiter chống DoS. |
 | `src/api/error_sanitizer.py` | Bọc exception toàn cục, ẩn thông tin nhạy cảm khỏi phản hồi HTTP 500. |
+| `PATCH /projects/{id}` | Endpoint REST cập nhật `default_branch` của dự án với kiểm định tenant. |
 | `scripts/seed_admin.py` | Công cụ dòng lệnh (CLI) khởi tạo tài khoản quản trị viên / tenant ban đầu. |
 | `tests/unit/services/test_auth_service.py` | Kiểm thử đơn vị cho thuật toán hashing, user seeding và JWT validation. |
 | `tests/unit/api/test_auth_api.py` | Kiểm thử endpoint `/auth/login`, `/auth/refresh` và cách ly tenant trên REST. |
