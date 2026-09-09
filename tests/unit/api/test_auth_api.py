@@ -138,3 +138,38 @@ def test_cross_tenant_isolation_on_projects(api_env):
     # Admin can access Alice's project
     admin_get = client.get(f"/projects/{proj_id}", headers={"Authorization": f"Bearer {admin_token}"})
     assert admin_get.status_code == 200
+
+
+def test_mcp_vs_rest_token_separation(api_env):
+    client, auth_service, _ = api_env
+
+    # 1. Generate permanent MCP token via /auth/mcp-token
+    resp = client.post("/auth/mcp-token", json={"username": "alice", "password": "alicePass"})
+    assert resp.status_code == 200
+    mcp_token = resp.json()["mcp_token"]
+    assert resp.json()["expires_in"] is None
+
+    # Dummy MCP route for test
+    async def dummy_mcp(request):
+        return JSONResponse({"ok": True, "tenant": request.state.user.get("tenant_id")})
+    client.app.add_route("/mcp", dummy_mcp, methods=["GET"])
+
+    # 2. MCP token works on /mcp
+    mcp_resp = client.get("/mcp", headers={"Authorization": f"Bearer {mcp_token}"})
+    assert mcp_resp.status_code == 200
+    assert mcp_resp.json()["tenant"] == "tenant-a"
+
+    # 3. MCP token is rejected on standard REST endpoints (/projects)
+    rest_resp = client.get("/projects", headers={"Authorization": f"Bearer {mcp_token}"})
+    assert rest_resp.status_code == 401
+    assert "Invalid or expired token" in rest_resp.json()["error"]
+
+    # 4. Standard access token works on REST endpoints
+    login_resp = client.post("/auth/login", json={"username": "alice", "password": "alicePass"})
+    access_token = login_resp.json()["access_token"]
+    rest_ok = client.get("/projects", headers={"Authorization": f"Bearer {access_token}"})
+    assert rest_ok.status_code == 200
+
+    # 5. Access token also works on MCP endpoints (backward compatibility)
+    mcp_ok = client.get("/mcp", headers={"Authorization": f"Bearer {access_token}"})
+    assert mcp_ok.status_code == 200

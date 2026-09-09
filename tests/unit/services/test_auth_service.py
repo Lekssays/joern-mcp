@@ -116,3 +116,23 @@ def test_authorize_project():
     # Mismatched tenant fails
     tenant_b_claims = {"sub": "u_b", "tenant_id": "tenant_b", "roles": ["user"]}
     assert auth.authorize_project(tenant_b_claims, "proj_a", vs) is False
+
+
+def test_mcp_permanent_token():
+    auth = AuthService(secret_key="my-mcp-key")
+    mcp_tok = auth.create_mcp_token("user1", "tenant1", ["user"])
+
+    # Decode as mcp type
+    payload = auth.decode_token(mcp_tok, expected_type="mcp")
+    assert payload["sub"] == "user1"
+    assert payload["tenant_id"] == "tenant1"
+    assert payload["type"] == "mcp"
+    assert "exp" not in payload
+
+    # Allowed types
+    payload2 = auth.decode_token(mcp_tok, allowed_types=["mcp", "access"])
+    assert payload2["sub"] == "user1"
+
+    # Reject if REST requires access token
+    with pytest.raises(jwt.InvalidTokenError):
+        auth.decode_token(mcp_tok, expected_type="access")

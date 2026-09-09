@@ -231,11 +231,39 @@ class AuthService:
         }
         return jwt.encode(payload, self.secret_key, algorithm=self.algorithm)
 
-    def decode_token(self, token: str, expected_type: Optional[str] = None) -> dict:
-        """Decode and validate a JWT token. Raises PyJWTError on failure."""
+    def create_mcp_token(
+        self,
+        user_id: str,
+        tenant_id: str,
+        roles: Optional[List[str]] = None,
+    ) -> str:
+        """Create a permanent (non-expiring) signed JWT token specifically for MCP clients."""
+        now = datetime.now(timezone.utc)
+        payload = {
+            "sub": user_id,
+            "tenant_id": tenant_id,
+            "roles": roles or ["user"],
+            "type": "mcp",
+            "iat": int(now.timestamp()),
+        }
+        return jwt.encode(payload, self.secret_key, algorithm=self.algorithm)
+
+    def decode_token(
+        self,
+        token: str,
+        expected_type: Optional[str] = None,
+        allowed_types: Optional[List[str]] = None,
+    ) -> dict:
+        """Decode and validate a JWT token.
+        
+        For MCP tokens without expiration, PyJWT validates without requiring exp claim.
+        """
         payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
-        if expected_type and payload.get("type") != expected_type:
-            raise jwt.InvalidTokenError(f"Expected token type '{expected_type}', got '{payload.get('type')}'")
+        actual_type = payload.get("type")
+        if expected_type and actual_type != expected_type:
+            raise jwt.InvalidTokenError(f"Expected token type '{expected_type}', got '{actual_type}'")
+        if allowed_types and actual_type not in allowed_types:
+            raise jwt.InvalidTokenError(f"Token type '{actual_type}' not allowed. Allowed: {allowed_types}")
         return payload
 
     def authorize_project(

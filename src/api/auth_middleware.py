@@ -3,6 +3,10 @@ Authentication Middleware (Phase 8 - API-03)
 
 ASGI Starlette middleware enforcing JWT Bearer token authentication
 and tenant context extraction across CodeBadger REST & MCP endpoints.
+
+Separation of Concerns:
+- MCP endpoints (/mcp, /sse, /messages): accept 'mcp' (permanent) or 'access' tokens.
+- REST endpoints (/projects, /versions, etc.): require 'access' tokens with standard expiration.
 """
 
 import logging
@@ -21,6 +25,7 @@ DEFAULT_PUBLIC_PATHS = {
     "/openapi.json",
     "/auth/login",
     "/auth/refresh",
+    "/auth/mcp-token",
 }
 
 
@@ -46,6 +51,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if path.startswith("/docs") or path.startswith("/openapi.json"):
             return True
         return False
+
+    def _is_mcp_request(self, path: str) -> bool:
+        """Check if request targets FastMCP transport routes."""
+        return (
+            path == "/mcp"
+            or path.startswith("/mcp/")
+            or path == "/sse"
+            or path.startswith("/sse/")
+            or path == "/messages"
+            or path.startswith("/messages/")
+        )
 
     async def dispatch(self, request: Request, call_next) -> Response:
         if request.method == "OPTIONS":
@@ -73,7 +89,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
 
         try:
-            payload = self.auth_service.decode_token(token, expected_type="access")
+            # Differentiate allowed token types by route
+            if self._is_mcp_request(path):
+                # MCP endpoints accept permanent 'mcp' tokens or short-lived 'access' tokens
+                payload = self.auth_service.decode_token(token, allowed_types=["mcp", "access"])
+            else:
+                # REST endpoints require standard short-lived 'access' tokens
+                payload = self.auth_service.decode_token(token, expected_type="access")
         except jwt.ExpiredSignatureError:
             return JSONResponse(
                 {"error": "Token has expired"},

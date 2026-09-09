@@ -114,6 +114,13 @@ def build_openapi_schema() -> dict:
             "description": "REST endpoints managing projects, source uploads, immutable versions, CPG build dispatch, and context retrieval."
         },
         "paths": {
+            "/auth/mcp-token": {
+                "post": {
+                    "summary": "Generate a permanent non-expiring JWT token specifically for MCP clients",
+                    "requestBody": {"required": True, "content": {"application/json": {}}},
+                    "responses": {"200": {"description": "MCP token generated"}, "401": {"description": "Invalid credentials"}}
+                }
+            },
             "/auth/login": {
                 "post": {
                     "summary": "Authenticate user credentials and receive JWT access/refresh tokens",
@@ -372,6 +379,41 @@ def register_rest_routes(app: Any, services: Dict[str, Any]) -> None:
         from ..services.audit_logger import AuditLogger
         services["audit_logger"] = AuditLogger()
     audit_logger = services["audit_logger"]
+
+    async def auth_mcp_token(request: Request) -> JSONResponse:
+        """Issue permanent non-expiring JWT token for MCP clients (Claude Code, Cursor, etc.)."""
+        auth_service = services.get("auth_service")
+        if not auth_service:
+            return JSONResponse({"error": "Auth service not configured"}, status_code=503)
+        try:
+            data = await request.json()
+        except Exception:
+            return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+        username = data.get("username")
+        password = data.get("password")
+        if not username or not password:
+            return JSONResponse({"error": "Username and password are required"}, status_code=400)
+
+        user = auth_service.authenticate_user(username, password)
+        if not user:
+            audit_logger.log_event("auth.mcp_token_failure", resource_id="", status_code=401, actor=username, tenant_id="unknown")
+            return JSONResponse({"error": "Invalid username or password"}, status_code=401)
+
+        mcp_token = auth_service.create_mcp_token(
+            user_id=user["id"],
+            tenant_id=user["tenant_id"],
+            roles=user.get("roles", ["user"]),
+        )
+        audit_logger.log_event("auth.mcp_token_issued", resource_id=user["id"], status_code=200, actor=user["username"], tenant_id=user["tenant_id"])
+        return JSONResponse({
+            "mcp_token": mcp_token,
+            "token_type": "Bearer",
+            "tenant_id": user["tenant_id"],
+            "roles": user.get("roles", ["user"]),
+            "expires_in": None,
+            "description": "Permanent MCP client token. Safe to save in mcp.json or claude_desktop_config.json",
+        })
 
     async def auth_login(request: Request) -> JSONResponse:
         auth_service = services.get("auth_service")
@@ -746,6 +788,7 @@ def register_rest_routes(app: Any, services: Dict[str, Any]) -> None:
     routes = [
         ("/openapi.json", openapi_schema_endpoint, ["GET"]),
         ("/docs", docs_swagger_endpoint, ["GET"]),
+        ("/auth/mcp-token", auth_mcp_token, ["POST"]),
         ("/auth/login", auth_login, ["POST"]),
         ("/auth/refresh", auth_refresh, ["POST"]),
         ("/projects", create_project, ["POST"]),

@@ -23,6 +23,7 @@ def main():
     parser.add_argument("--tenant-id", default="admin", help="Tenant ID associated with account")
     parser.add_argument("--roles", default="admin", help="Comma-separated roles, e.g. 'admin' or 'user'")
     parser.add_argument("--db-url", default=None, help="Postgres / SQLite database URL")
+    parser.add_argument("--mcp-token", action="store_true", help="Generate permanent MCP client token")
 
     args = parser.parse_args()
 
@@ -43,6 +44,12 @@ def main():
         roles=roles,
     )
     print(f"Successfully seeded user: {user['username']} (id: {user['id']}, tenant: {user['tenant_id']}, roles: {user['roles']})")
+    if args.mcp_token:
+        mcp_tok = auth.create_mcp_token(user_id=user["id"], tenant_id=user["tenant_id"], roles=user["roles"])
+        print(f"
+Permanent MCP Token (for claude_desktop_config.json / mcp.json):
+{mcp_tok}
+")
 
 
 if __name__ == "__main__":
